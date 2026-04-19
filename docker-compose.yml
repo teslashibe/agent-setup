@@ -1,0 +1,53 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: agent-app-timescaledb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agent_app
+    ports:
+      - "5434:5432"
+    volumes:
+      - tsdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/bin/migrate", "up"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@timescaledb:5432/agent_app?sslmode=disable
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/bin/server"]
+    env_file:
+      - ./backend/.env
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://postgres:postgres@timescaledb:5432/agent_app?sslmode=disable
+      APP_URL: http://localhost:8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  tsdata:

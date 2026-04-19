@@ -1,0 +1,45 @@
+# Fly.io deployment config.
+#
+# Setup:
+#   fly launch --no-deploy --copy-config --dockerfile backend/Dockerfile
+#   fly postgres create --name agent-app-db   # OR provision Timescale Cloud and use its DATABASE_URL
+#   fly postgres attach agent-app-db
+#   fly secrets set ANTHROPIC_API_KEY=sk-ant-... JWT_SECRET=$(openssl rand -hex 32)
+#   fly deploy
+#
+# For TimescaleDB specifically, use Timescale Cloud (https://www.timescale.com/cloud)
+# and set DATABASE_URL via `fly secrets set DATABASE_URL=postgres://...`.
+
+app = "claude-agent-go"
+primary_region = "ord"
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[deploy]
+  release_command = "/bin/migrate up"
+
+[env]
+  PORT = "8080"
+  APP_URL = "https://claude-agent-go.fly.dev"
+  ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
+  AGENT_MAX_TOOL_ITERATIONS = "10"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

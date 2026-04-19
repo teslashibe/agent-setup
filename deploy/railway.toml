@@ -1,0 +1,19 @@
+# Railway deployment config (railway.app)
+#
+# Setup:
+#   1. Push this repo to GitHub
+#   2. railway init  → connect repo
+#   3. Add a TimescaleDB plugin (community template) or set DATABASE_URL to Timescale Cloud
+#   4. Set env vars: ANTHROPIC_API_KEY, JWT_SECRET, APP_URL
+#   5. Railway will auto-build using backend/Dockerfile
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+startCommand = "/bin/migrate up && /bin/server"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

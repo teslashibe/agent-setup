@@ -1,0 +1,11 @@
+backend/.env
+backend/bin/
+.env
+.env.local
+*.log
+.DS_Store
+.idea/
+.vscode/
+tmp/
+dist/
+coverage.out
