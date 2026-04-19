@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help setup setup-mobile up down restart logs dev dev-db dev-mobile dev-web dev-all build test lint fmt tidy typecheck migrate migrate-down migrate-status migrate-create db-shell db-reset seed token clean
+.PHONY: help setup setup-mobile up down restart logs dev dev-db dev-mobile dev-web dev-all build test lint fmt tidy typecheck migrate migrate-down migrate-status migrate-create db-shell db-reset seed token clean managed-agents-provision
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -93,6 +93,9 @@ seed: ## Issue dev JWT for dev@local
 	curl -s -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d '{"email":"dev@local","name":"Dev User"}'
 
 token: seed ## Alias for seed
+
+managed-agents-provision: ## Create Anthropic Agent + Environment (run once, store IDs in .env)
+	cd backend && go run ./cmd/provision
 
 clean: ## Remove generated artifacts
 	$(COMPOSE) down -v

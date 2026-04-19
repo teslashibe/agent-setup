@@ -17,13 +17,13 @@ type Config struct {
 	AuthEmailFrom      string
 	MobileAppScheme    string
 
-	AnthropicAPIKey     string
-	AnthropicModel      string
-	AnthropicMaxTokens  int
-	AgentMaxIterations  int
-	AgentSystemPrompt   string
-	AgentRunRateLimit   int
-	AgentRunRateWindow  time.Duration
+	AnthropicAPIKey    string
+	AnthropicAgentID   string
+	AnthropicEnvID     string
+
+	AgentSystemPrompt  string
+	AgentRunRateLimit  int
+	AgentRunRateWindow time.Duration
 }
 
 func Load() Config {
@@ -37,10 +37,10 @@ func Load() Config {
 		AuthEmailFrom:      getEnv("AUTH_EMAIL_FROM", "Agent App <onboarding@example.com>"),
 		MobileAppScheme:    getEnv("MOBILE_APP_SCHEME", "agentapp"),
 
-		AnthropicAPIKey:    strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")),
-		AnthropicModel:     getEnv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929"),
-		AnthropicMaxTokens: getEnvInt("ANTHROPIC_MAX_TOKENS", 4096),
-		AgentMaxIterations: getEnvInt("AGENT_MAX_TOOL_ITERATIONS", 10),
+		AnthropicAPIKey:  strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")),
+		AnthropicAgentID: strings.TrimSpace(os.Getenv("ANTHROPIC_AGENT_ID")),
+		AnthropicEnvID:   strings.TrimSpace(os.Getenv("ANTHROPIC_ENVIRONMENT_ID")),
+
 		AgentSystemPrompt:  getEnv("AGENT_SYSTEM_PROMPT", "You are a helpful assistant."),
 		AgentRunRateLimit:  getEnvInt("AGENT_RUN_RATE_LIMIT", 10),
 		AgentRunRateWindow: time.Duration(getEnvInt("AGENT_RUN_RATE_WINDOW_SECONDS", 60)) * time.Second,
@@ -48,11 +48,11 @@ func Load() Config {
 }
 
 func getEnv(key, fallback string) string {
-	value, ok := os.LookupEnv(key)
-	if !ok || strings.TrimSpace(value) == "" {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
 		return fallback
 	}
-	return strings.TrimSpace(value)
+	return strings.TrimSpace(v)
 }
 
 func getEnvInt(key string, fallback int) int {

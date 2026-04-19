@@ -30,30 +30,28 @@ func main() {
 
 	core, err := bootstrap.Init(ctx)
 	if err != nil {
-		log.Fatalf("bootstrap init: %v", err)
+		log.Fatalf("bootstrap: %v", err)
 	}
 	defer core.Pool.Close()
 
 	authSvc := auth.NewService(core.Pool)
 	magicSvc, err := newMagicLinkService(core.Cfg, core.Pool, authSvc)
 	if err != nil {
-		log.Fatalf("magiclink init: %v", err)
+		log.Fatalf("magiclink: %v", err)
+	}
+
+	agentSvc, err := agent.NewService(core.Cfg, agent.NewStore(core.Pool))
+	if err != nil {
+		log.Fatalf("agent: %v", err)
 	}
 
 	authMW := auth.NewMiddleware(magicSvc, authSvc)
 	authHandler := auth.NewHandler(authSvc)
-
-	agentStore := agent.NewStore(core.Pool)
-	agentSvc, err := agent.NewService(core.Cfg, agentStore, agent.DefaultRegistry())
-	if err != nil {
-		log.Fatalf("agent init: %v", err)
-	}
 	agentHandler := agent.NewHandler(agentSvc)
 
 	app := fiber.New(fiber.Config{
-		AppName:               "Claude Agent Go API",
-		DisableStartupMessage: false,
-		StreamRequestBody:     true,
+		AppName:           "Claude Agent Go API",
+		StreamRequestBody: true,
 	})
 	app.Use(recover.New())
 	app.Use(logger.New())
@@ -93,9 +91,7 @@ func main() {
 	agentHandler.Mount(api, runLimiter)
 
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- app.Listen(":" + core.Cfg.Port)
-	}()
+	go func() { errCh <- app.Listen(":" + core.Cfg.Port) }()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -103,42 +99,37 @@ func main() {
 	select {
 	case listenErr := <-errCh:
 		if listenErr != nil {
-			log.Fatalf("server listen error: %v", listenErr)
+			log.Fatalf("listen: %v", listenErr)
 		}
 	case sig := <-sigCh:
-		log.Printf("shutdown signal received: %s", sig)
+		log.Printf("shutdown: %s", sig)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := app.ShutdownWithContext(shutdownCtx); err != nil {
-			log.Fatalf("shutdown failed: %v", err)
+			log.Fatalf("shutdown: %v", err)
 		}
 	}
 }
 
 func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service) fiber.Handler {
-	type request struct {
+	type req struct {
 		Email string `json:"email"`
 		Name  string `json:"name"`
 	}
-
 	return func(c *fiber.Ctx) error {
-		var req request
-		if err := c.BodyParser(&req); err != nil {
+		var r req
+		if err := c.BodyParser(&r); err != nil {
 			return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "invalid request body"))
 		}
-
-		email := strings.ToLower(strings.TrimSpace(req.Email))
+		email := strings.ToLower(strings.TrimSpace(r.Email))
 		if email == "" {
 			return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "email is required"))
 		}
-
-		name := strings.TrimSpace(req.Name)
 		identityKey := fmt.Sprintf("dev|%s", email)
-		user, err := authSvc.UpsertIdentity(c.UserContext(), identityKey, email, name)
+		user, err := authSvc.UpsertIdentity(c.UserContext(), identityKey, email, strings.TrimSpace(r.Name))
 		if err != nil {
 			return apperrors.Handle(c, err)
 		}
-
 		token, err := magicSvc.IssueToken(magiclink.Claims{
 			Subject:     identityKey,
 			Email:       email,
@@ -147,7 +138,6 @@ func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service) fiber.H
 		if err != nil {
 			return apperrors.Handle(c, err)
 		}
-
 		return c.JSON(magiclink.AuthResult{
 			JWT:         token,
 			UserID:      user.ID,

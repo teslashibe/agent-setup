@@ -21,13 +21,11 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// Mount registers the agent routes under the provided fiber.Router.
-// All routes assume the parent router has already enforced authentication.
-// runLimiter is applied only to the /run endpoint to guard Anthropic spend.
 func (h *Handler) Mount(r fiber.Router, runLimiter ...fiber.Handler) {
 	r.Post("/agent/sessions", h.CreateSession)
 	r.Get("/agent/sessions", h.ListSessions)
 	r.Get("/agent/sessions/:id", h.GetSession)
+	r.Delete("/agent/sessions/:id", h.DeleteSession)
 	r.Get("/agent/sessions/:id/messages", h.ListMessages)
 	if len(runLimiter) > 0 && runLimiter[0] != nil {
 		r.Post("/agent/sessions/:id/run", runLimiter[0], h.Run)
@@ -36,24 +34,18 @@ func (h *Handler) Mount(r fiber.Router, runLimiter ...fiber.Handler) {
 	}
 }
 
-type createSessionRequest struct {
-	Title        string  `json:"title"`
-	SystemPrompt *string `json:"system_prompt"`
-	Model        *string `json:"model"`
-}
-
 func (h *Handler) CreateSession(c *fiber.Ctx) error {
 	userID, err := httputil.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-
-	var req createSessionRequest
+	var req struct {
+		Title string `json:"title"`
+	}
 	if err := c.BodyParser(&req); err != nil {
 		return apperrors.Handle(c, apperrors.ErrBadRequest)
 	}
-
-	sess, err := h.svc.Store().CreateSession(c.UserContext(), userID, req.Title, req.SystemPrompt, req.Model)
+	sess, err := h.svc.CreateSession(c.UserContext(), userID, req.Title)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -65,7 +57,7 @@ func (h *Handler) ListSessions(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	sessions, err := h.svc.Store().ListSessions(c.UserContext(), userID, 50)
+	sessions, err := h.svc.Store().ListSessions(c.UserContext(), userID)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -87,42 +79,48 @@ func (h *Handler) GetSession(c *fiber.Ctx) error {
 	return c.JSON(sess)
 }
 
+func (h *Handler) DeleteSession(c *fiber.Ctx) error {
+	userID, err := httputil.CurrentUserID(c)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	if err := h.svc.Store().DeleteSession(c.UserContext(), userID, c.Params("id")); err != nil {
+		return apperrors.Handle(c, err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 func (h *Handler) ListMessages(c *fiber.Ctx) error {
 	userID, err := httputil.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	if _, err := h.svc.Store().GetSession(c.UserContext(), userID, c.Params("id")); err != nil {
-		return apperrors.Handle(c, err)
-	}
-	msgs, err := h.svc.Store().ListMessages(c.UserContext(), c.Params("id"))
+	sess, err := h.svc.Store().GetSession(c.UserContext(), userID, c.Params("id"))
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	if msgs == nil {
-		msgs = []Message{}
+	messages, err := h.svc.History(c.UserContext(), sess.AnthropicSessionID)
+	if err != nil {
+		return apperrors.Handle(c, err)
 	}
-	return c.JSON(fiber.Map{"messages": msgs})
+	if messages == nil {
+		messages = []Message{}
+	}
+	return c.JSON(fiber.Map{"messages": messages})
 }
 
-type runRequest struct {
-	Message string `json:"message"`
-}
-
-// Run handles POST /agent/sessions/:id/run and streams events as SSE.
 func (h *Handler) Run(c *fiber.Ctx) error {
 	userID, err := httputil.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-
-	sessionID := c.Params("id")
-	sess, err := h.svc.Store().GetSession(c.UserContext(), userID, sessionID)
+	sess, err := h.svc.Store().GetSession(c.UserContext(), userID, c.Params("id"))
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-
-	var req runRequest
+	var req struct {
+		Message string `json:"message"`
+	}
 	if err := c.BodyParser(&req); err != nil {
 		return apperrors.Handle(c, apperrors.ErrBadRequest)
 	}
@@ -136,6 +134,15 @@ func (h *Handler) Run(c *fiber.Ctx) error {
 		return apperrors.Handle(c, err)
 	}
 
+	// Auto-title: if session is still "New chat", update from first message.
+	if sess.Title == "New chat" || sess.Title == "" {
+		title := req.Message
+		if len(title) > 60 {
+			title = title[:60]
+		}
+		_ = h.svc.Store().UpdateTitle(ctx, sess.ID, title)
+	}
+
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
@@ -147,12 +154,8 @@ func (h *Handler) Run(c *fiber.Ctx) error {
 			if err != nil {
 				continue
 			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, payload); err != nil {
-				return
-			}
-			if err := w.Flush(); err != nil {
-				return
-			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, payload)
+			w.Flush()
 		}
 	}))
 
