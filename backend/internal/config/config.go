@@ -21,7 +21,6 @@ type Config struct {
 	AnthropicAgentID   string
 	AnthropicEnvID     string
 
-	AgentSystemPrompt  string
 	AgentRunRateLimit  int
 	AgentRunRateWindow time.Duration
 }
@@ -41,7 +40,6 @@ func Load() Config {
 		AnthropicAgentID: strings.TrimSpace(os.Getenv("ANTHROPIC_AGENT_ID")),
 		AnthropicEnvID:   strings.TrimSpace(os.Getenv("ANTHROPIC_ENVIRONMENT_ID")),
 
-		AgentSystemPrompt:  getEnv("AGENT_SYSTEM_PROMPT", "You are a helpful assistant."),
 		AgentRunRateLimit:  getEnvInt("AGENT_RUN_RATE_LIMIT", 10),
 		AgentRunRateWindow: time.Duration(getEnvInt("AGENT_RUN_RATE_WINDOW_SECONDS", 60)) * time.Second,
 	}

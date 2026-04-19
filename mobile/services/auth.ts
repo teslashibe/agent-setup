@@ -36,10 +36,3 @@ export async function getMe() {
   return request<User>("/api/me");
 }
 
-export async function getDevToken(email: string, name = "Developer") {
-  return request<AuthResponse>("/auth/login", {
-    method: "POST",
-    auth: false,
-    body: JSON.stringify({ email, name })
-  });
-}

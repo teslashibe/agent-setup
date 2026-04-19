@@ -8,22 +8,27 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/joho/godotenv"
-
-	"github.com/teslashibe/agent-setup/backend/internal/config"
 )
 
 func main() {
 	_ = godotenv.Load()
-	cfg := config.Load()
-	if cfg.AnthropicAPIKey == "" {
+
+	apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	if apiKey == "" {
 		log.Fatal("ANTHROPIC_API_KEY is required in backend/.env")
 	}
+	systemPrompt := os.Getenv("AGENT_SYSTEM_PROMPT")
+	if systemPrompt == "" {
+		systemPrompt = "You are a helpful assistant."
+	}
 
-	client := anthropic.NewClient(option.WithAPIKey(cfg.AnthropicAPIKey))
+	client := anthropic.NewClient(option.WithAPIKey(apiKey))
 	ctx := context.Background()
 
 	fmt.Println("Creating Anthropic Agent...")
@@ -32,7 +37,7 @@ func main() {
 		Model: anthropic.BetaManagedAgentsModelConfigParams{
 			ID: anthropic.BetaManagedAgentsModelClaudeSonnet4_5_20250929,
 		},
-		System: anthropic.String(cfg.AgentSystemPrompt),
+		System: anthropic.String(systemPrompt),
 		Tools: []anthropic.BetaAgentNewParamsToolUnion{{
 			OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
 				Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
