@@ -116,16 +116,28 @@ Sign in: enter any email at the welcome screen → check the API logs for the OT
 
 ### 6) Deploy backend
 
-Pick the cloud target. Configs are in `deploy/`:
+This repo doesn't ship cloud-specific configs — deploy it however your infrastructure works.
 
-| Target | One-liner |
-| --- | --- |
-| **Fly.io** (recommended for speed) | `fly launch && fly secrets set ANTHROPIC_API_KEY=... ANTHROPIC_AGENT_ID=... ANTHROPIC_ENVIRONMENT_ID=... JWT_SECRET=... RESEND_API_KEY=... && fly deploy` |
-| **Railway** | Push to GitHub → connect repo → set env vars → auto-deploy |
-| **GCP Cloud Run** | See [`deploy/cloudrun.md`](./deploy/cloudrun.md) |
-| **Kubernetes** | `cp deploy/k8s/secret.example.yaml deploy/k8s/secret.yaml && fill it in && kubectl apply -k deploy/k8s/` |
+The container image builds automatically on every push to `main` and on tags via `.github/workflows/docker.yml`, publishing to:
 
-For the database, use [Timescale Cloud](https://www.timescale.com/cloud) — set `DATABASE_URL` to its connection string in your secrets.
+```
+ghcr.io/<your-org>/<client-name>:main-<timestamp>-<sha>
+```
+
+What needs to be provided in your deployment environment:
+
+**Required environment variables** (see `backend/.env.example` for the full list):
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_AGENT_ID`, `ANTHROPIC_ENVIRONMENT_ID`
+- `JWT_SECRET` (`openssl rand -hex 32`)
+- `DATABASE_URL`
+- `RESEND_API_KEY`, `AUTH_EMAIL_FROM`
+- `APP_URL`, `CORS_ALLOWED_ORIGINS`
+
+**Run order:**
+1. `/bin/migrate up` — runs Goose migrations (one-shot job per deploy)
+2. `/bin/server` — long-running API process
+
+**Database:** any Postgres 16+ with the TimescaleDB extension installed. [Timescale Cloud](https://www.timescale.com/cloud) is the easiest managed option.
 
 ### 7) Ship the mobile app
 
@@ -156,12 +168,7 @@ agent-setup/
 │   ├── components/ui/     # NativeWind primitives
 │   ├── providers/         # AuthSessionProvider
 │   └── services/          # api.ts, auth.ts, agent.ts (SSE consumer)
-├── deploy/
-│   ├── fly.toml
-│   ├── railway.toml
-│   ├── cloudrun.md
-│   └── k8s/
-├── .github/workflows/     # ci.yml + docker.yml
+├── .github/workflows/     # ci.yml + docker.yml (builds → ghcr.io)
 ├── docker-compose.yml
 └── Makefile
 ```
