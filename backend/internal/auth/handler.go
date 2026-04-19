@@ -11,13 +11,9 @@ type Handler struct{ svc *Service }
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) GetMe(c *fiber.Ctx) error {
-	userID, err := apperrors.CurrentUserID(c)
+	user, err := h.svc.GetUser(c.UserContext(), apperrors.UserID(c))
 	if err != nil {
-		return apperrors.Handle(c, err)
-	}
-	user, err := h.svc.GetUser(c.UserContext(), userID)
-	if err != nil {
-		return apperrors.Handle(c, err)
+		return err
 	}
 	return c.JSON(user)
 }

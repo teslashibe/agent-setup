@@ -7,15 +7,15 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-type AppError struct {
+type Error struct {
 	Status  int
 	Message string
 }
 
-func (e *AppError) Error() string { return e.Message }
+func (e *Error) Error() string { return e.Message }
 
-func New(status int, message string) *AppError {
-	return &AppError{Status: status, Message: message}
+func New(status int, message string) *Error {
+	return &Error{Status: status, Message: message}
 }
 
 var (
@@ -25,11 +25,10 @@ var (
 	ErrForbidden    = New(http.StatusForbidden, "forbidden")
 )
 
-func Handle(c *fiber.Ctx, err error) error {
-	if err == nil {
-		return nil
-	}
-	var appErr *AppError
+// FiberHandler is the centralized Fiber error handler. Wire it via
+// fiber.Config{ErrorHandler: apperrors.FiberHandler}.
+func FiberHandler(c *fiber.Ctx, err error) error {
+	var appErr *Error
 	if errors.As(err, &appErr) {
 		return c.Status(appErr.Status).JSON(fiber.Map{"error": appErr.Message})
 	}
@@ -38,12 +37,12 @@ func Handle(c *fiber.Ctx, err error) error {
 
 const userIDKey = "user_id"
 
-func SetUserID(c *fiber.Ctx, id string)  { c.Locals(userIDKey, id) }
+// SetUserID is called by the auth middleware after a successful JWT check.
+func SetUserID(c *fiber.Ctx, id string) { c.Locals(userIDKey, id) }
 
-func CurrentUserID(c *fiber.Ctx) (string, error) {
-	id, ok := c.Locals(userIDKey).(string)
-	if !ok || id == "" {
-		return "", ErrUnauthorized
-	}
-	return id, nil
+// UserID returns the authenticated user's ID. Safe to call only inside
+// routes guarded by RequireAuth — the middleware guarantees the value is set.
+func UserID(c *fiber.Ctx) string {
+	id, _ := c.Locals(userIDKey).(string)
+	return id
 }

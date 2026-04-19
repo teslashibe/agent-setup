@@ -2,39 +2,18 @@ package auth
 
 import "testing"
 
-func TestNormalizeDisplayName(t *testing.T) {
-	tests := []struct {
-		name  string
-		email string
-		input string
-		want  string
+func TestDisplayName(t *testing.T) {
+	cases := []struct {
+		name, email, input, want string
 	}{
-		{
-			name:  "uses explicit name",
-			email: "person@example.com",
-			input: "Taylor",
-			want:  "Taylor",
-		},
-		{
-			name:  "falls back to email local part",
-			email: "person@example.com",
-			input: "",
-			want:  "person",
-		},
-		{
-			name:  "falls back to generic user",
-			email: "",
-			input: "",
-			want:  "User",
-		},
+		{"explicit name wins", "person@example.com", "Taylor", "Taylor"},
+		{"falls back to email local part", "person@example.com", "", "person"},
+		{"falls back to generic user", "", "", "User"},
 	}
-
-	for _, tc := range tests {
-		tc := tc
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := normalizeDisplayName(tc.input, tc.email)
-			if got != tc.want {
-				t.Fatalf("normalizeDisplayName(%q, %q) = %q, want %q", tc.input, tc.email, got, tc.want)
+			if got := displayName(tc.input, tc.email); got != tc.want {
+				t.Fatalf("displayName(%q, %q) = %q, want %q", tc.input, tc.email, got, tc.want)
 			}
 		})
 	}

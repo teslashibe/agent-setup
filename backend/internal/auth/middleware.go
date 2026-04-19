@@ -27,14 +27,14 @@ func (m *Middleware) RequireAuth() fiber.Handler {
 			}
 		}
 		if header == "" {
-			return apperrors.Handle(c, apperrors.ErrUnauthorized)
+			return apperrors.ErrUnauthorized
 		}
 		userID, claims, err := m.magicSvc.AuthenticateBearer(c.UserContext(), header)
 		if err != nil {
-			return apperrors.Handle(c, apperrors.ErrUnauthorized)
+			return apperrors.ErrUnauthorized
 		}
 		if _, err := m.authSvc.GetUser(c.UserContext(), userID); err != nil {
-			return apperrors.Handle(c, err)
+			return err
 		}
 		apperrors.SetUserID(c, userID)
 		c.Locals("auth_claims", claims)

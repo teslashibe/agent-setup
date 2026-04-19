@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -48,7 +47,11 @@ func main() {
 		log.Fatalf("agent: %v", err)
 	}
 
-	app := fiber.New(fiber.Config{AppName: "Claude Agent Go", StreamRequestBody: true})
+	app := fiber.New(fiber.Config{
+		AppName:           "Claude Agent Go",
+		StreamRequestBody: true,
+		ErrorHandler:      apperrors.FiberHandler,
+	})
 	app.Use(recover.New(), logger.New(), cors.New(cors.Config{
 		AllowOrigins: cfg.CORSAllowedOrigins,
 		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
@@ -119,30 +122,30 @@ func newPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 }
 
 func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service) fiber.Handler {
-	type req struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
-	}
 	return func(c *fiber.Ctx) error {
-		var r req
-		if err := c.BodyParser(&r); err != nil {
-			return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "invalid request body"))
+		var req struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
 		}
-		email := strings.ToLower(strings.TrimSpace(r.Email))
+		if err := c.BodyParser(&req); err != nil {
+			return apperrors.New(http.StatusBadRequest, "invalid request body")
+		}
+		email := strings.ToLower(strings.TrimSpace(req.Email))
 		if email == "" {
-			return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "email is required"))
+			return apperrors.New(http.StatusBadRequest, "email is required")
 		}
-		user, err := authSvc.UpsertIdentity(c.UserContext(), fmt.Sprintf("dev|%s", email), email, strings.TrimSpace(r.Name))
+		identity := "dev|" + email
+		user, err := authSvc.UpsertIdentity(c.UserContext(), identity, email, strings.TrimSpace(req.Name))
 		if err != nil {
-			return apperrors.Handle(c, err)
+			return err
 		}
 		token, err := magicSvc.IssueToken(magiclink.Claims{
-			Subject:     fmt.Sprintf("dev|%s", email),
+			Subject:     identity,
 			Email:       email,
 			DisplayName: user.Name,
 		})
 		if err != nil {
-			return apperrors.Handle(c, err)
+			return err
 		}
 		return c.JSON(magiclink.AuthResult{JWT: token, UserID: user.ID, Email: user.Email, DisplayName: user.Name})
 	}

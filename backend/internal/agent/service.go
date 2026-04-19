@@ -19,10 +19,10 @@ type Service struct {
 }
 
 func NewService(cfg config.Config, store *Store) (*Service, error) {
-	if cfg.AnthropicAPIKey == "" {
+	switch {
+	case cfg.AnthropicAPIKey == "":
 		return nil, errors.New("ANTHROPIC_API_KEY is required")
-	}
-	if cfg.AnthropicAgentID == "" || cfg.AnthropicEnvID == "" {
+	case cfg.AnthropicAgentID == "" || cfg.AnthropicEnvID == "":
 		return nil, errors.New("ANTHROPIC_AGENT_ID and ANTHROPIC_ENVIRONMENT_ID are required — run: make managed-agents-provision")
 	}
 	return &Service{
@@ -38,9 +38,7 @@ func (s *Service) Store() *Store { return s.store }
 // mapping in our database.
 func (s *Service) CreateSession(ctx context.Context, userID, title string) (Session, error) {
 	antSess, err := s.client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-		Agent: anthropic.BetaSessionNewParamsAgentUnion{
-			OfString: anthropic.String(s.cfg.AnthropicAgentID),
-		},
+		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(s.cfg.AnthropicAgentID)},
 		EnvironmentID: s.cfg.AnthropicEnvID,
 	})
 	if err != nil {
@@ -53,8 +51,7 @@ func (s *Service) CreateSession(ctx context.Context, userID, title string) (Sess
 }
 
 // Run streams agent events for a user message. The Anthropic event stream is
-// opened before sending the message to avoid a race condition, then events are
-// translated and emitted on the returned channel.
+// opened before sending the message to avoid a race condition.
 func (s *Service) Run(ctx context.Context, sess Session, userText string) (<-chan Event, error) {
 	events := make(chan Event, 32)
 	go func() {
@@ -64,22 +61,7 @@ func (s *Service) Run(ctx context.Context, sess Session, userText string) (<-cha
 			anthropic.BetaSessionEventStreamParams{})
 		defer stream.Close()
 
-		textBlock := anthropic.BetaManagedAgentsTextBlockParam{
-			Type: anthropic.BetaManagedAgentsTextBlockTypeText,
-			Text: userText,
-		}
-		userMsg := anthropic.BetaManagedAgentsUserMessageEventParams{
-			Type: anthropic.BetaManagedAgentsUserMessageEventParamsTypeUserMessage,
-			Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{
-				{OfText: &textBlock},
-			},
-		}
-		if _, err := s.client.Beta.Sessions.Events.Send(ctx, sess.AnthropicSessionID,
-			anthropic.BetaSessionEventSendParams{
-				Events: []anthropic.BetaManagedAgentsEventParamsUnion{
-					{OfUserMessage: &userMsg},
-				},
-			}); err != nil {
+		if err := s.sendUserMessage(ctx, sess.AnthropicSessionID, userText); err != nil {
 			emit(events, Event{Type: "error", Error: err.Error()})
 			return
 		}
@@ -101,32 +83,51 @@ func (s *Service) Run(ctx context.Context, sess Session, userText string) (<-cha
 	return events, nil
 }
 
-// History fetches the full event history for a session from Anthropic and
-// reconstructs it as conversation turns for the client.
-func (s *Service) History(ctx context.Context, anthropicSessionID string) ([]Message, error) {
-	var messages []Message
-	var assistantMsg *Message
+func (s *Service) sendUserMessage(ctx context.Context, sessionID, text string) error {
+	tb := anthropic.BetaManagedAgentsTextBlockParam{
+		Type: anthropic.BetaManagedAgentsTextBlockTypeText,
+		Text: text,
+	}
+	msg := anthropic.BetaManagedAgentsUserMessageEventParams{
+		Type:    anthropic.BetaManagedAgentsUserMessageEventParamsTypeUserMessage,
+		Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{OfText: &tb}},
+	}
+	_, err := s.client.Beta.Sessions.Events.Send(ctx, sessionID, anthropic.BetaSessionEventSendParams{
+		Events: []anthropic.BetaManagedAgentsEventParamsUnion{{OfUserMessage: &msg}},
+	})
+	return err
+}
 
-	flushAssistant := func() {
-		if assistantMsg != nil && len(assistantMsg.Content) > 0 {
-			messages = append(messages, *assistantMsg)
-			assistantMsg = nil
+// History fetches event history from Anthropic and reconstructs it as
+// conversation turns for the client.
+func (s *Service) History(ctx context.Context, anthropicSessionID string) ([]Message, error) {
+	var (
+		messages  = []Message{}
+		assistant *Message
+	)
+	flush := func() {
+		if assistant != nil && len(assistant.Content) > 0 {
+			messages = append(messages, *assistant)
 		}
+		assistant = nil
+	}
+	appendAssistant := func(b Block) {
+		if assistant == nil {
+			assistant = &Message{Role: "assistant"}
+		}
+		assistant.Content = append(assistant.Content, b)
 	}
 
 	iter := s.client.Beta.Sessions.Events.ListAutoPaging(ctx, anthropicSessionID,
-		anthropic.BetaSessionEventListParams{
-			Order: anthropic.BetaSessionEventListParamsOrderAsc,
-		})
+		anthropic.BetaSessionEventListParams{Order: anthropic.BetaSessionEventListParamsOrderAsc})
 
 	for iter.Next() {
 		u := iter.Current()
 		switch u.Type {
 		case "user.message":
-			flushAssistant()
-			ev := u.AsUserMessage()
+			flush()
 			var blocks []Block
-			for _, c := range ev.Content {
+			for _, c := range u.AsUserMessage().Content {
 				if c.Type == "text" && c.Text != "" {
 					blocks = append(blocks, Block{Type: "text", Text: c.Text})
 				}
@@ -134,73 +135,44 @@ func (s *Service) History(ctx context.Context, anthropicSessionID string) ([]Mes
 			if len(blocks) > 0 {
 				messages = append(messages, Message{Role: "user", Content: blocks})
 			}
-
 		case "agent.message":
-			if assistantMsg == nil {
-				assistantMsg = &Message{Role: "assistant"}
-			}
-			ev := u.AsAgentMessage()
-			for _, b := range ev.Content {
+			for _, b := range u.AsAgentMessage().Content {
 				if b.Text != "" {
-					assistantMsg.Content = append(assistantMsg.Content, Block{Type: "text", Text: b.Text})
+					appendAssistant(Block{Type: "text", Text: b.Text})
 				}
 			}
-
 		case "agent.tool_use":
-			if assistantMsg == nil {
-				assistantMsg = &Message{Role: "assistant"}
-			}
 			ev := u.AsAgentToolUse()
-			assistantMsg.Content = append(assistantMsg.Content, Block{
-				Type: "tool_use", ID: ev.ID, Name: ev.Name,
-			})
-
+			appendAssistant(Block{Type: "tool_use", ID: ev.ID, Name: ev.Name})
 		case "agent.tool_result":
-			if assistantMsg == nil {
-				assistantMsg = &Message{Role: "assistant"}
-			}
-			ev := u.AsAgentToolResult()
-			assistantMsg.Content = append(assistantMsg.Content, Block{
-				Type: "tool_result", ToolID: ev.ToolUseID,
-			})
+			appendAssistant(Block{Type: "tool_result", ToolID: u.AsAgentToolResult().ToolUseID})
 		}
 	}
-	flushAssistant()
-
-	if err := iter.Err(); err != nil {
-		return nil, err
-	}
-	return messages, nil
+	flush()
+	return messages, iter.Err()
 }
 
 func translateStreamEvent(u anthropic.BetaManagedAgentsStreamSessionEventsUnion) *Event {
 	switch u.Type {
 	case "agent.message":
-		ev := u.AsAgentMessage()
 		var text strings.Builder
-		for _, b := range ev.Content {
+		for _, b := range u.AsAgentMessage().Content {
 			text.WriteString(b.Text)
 		}
 		if text.Len() == 0 {
 			return nil
 		}
 		return &Event{Type: "text", Text: text.String()}
-
 	case "agent.tool_use":
 		ev := u.AsAgentToolUse()
 		return &Event{Type: "tool_use", Tool: ev.Name, ToolID: ev.ID}
-
 	case "agent.tool_result":
 		ev := u.AsAgentToolResult()
 		return &Event{Type: "tool_result", ToolID: ev.ToolUseID, IsError: ev.IsError}
-
 	case "session.status_idle":
 		return &Event{Type: "done"}
-
 	case "session.error":
-		ev := u.AsSessionError()
-		return &Event{Type: "error", Error: ev.Error.RawJSON()}
-
+		return &Event{Type: "error", Error: u.AsSessionError().Error.RawJSON()}
 	case "session.status_terminated":
 		return &Event{Type: "error", Error: "session terminated"}
 	}

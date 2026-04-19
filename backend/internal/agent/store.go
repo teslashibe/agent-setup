@@ -11,66 +11,56 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
 )
 
-type Store struct {
-	pool *pgxpool.Pool
+const sessionFields = `id::text, user_id::text, title, anthropic_session_id, created_at, updated_at`
+
+type Store struct{ pool *pgxpool.Pool }
+
+func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+type scanner interface {
+	Scan(dest ...any) error
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func scanSession(row scanner) (Session, error) {
+	var s Session
+	err := row.Scan(&s.ID, &s.UserID, &s.Title, &s.AnthropicSessionID, &s.CreatedAt, &s.UpdatedAt)
+	return s, err
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID, title, anthropicSessionID string) (Session, error) {
-	const q = `
+	return scanSession(s.pool.QueryRow(ctx, `
 		INSERT INTO agent_sessions (user_id, title, anthropic_session_id)
 		VALUES ($1, $2, $3)
-		RETURNING id::text, user_id::text, title, anthropic_session_id, created_at, updated_at
-	`
-	var sess Session
-	err := s.pool.QueryRow(ctx, q, userID, strings.TrimSpace(title), anthropicSessionID).Scan(
-		&sess.ID, &sess.UserID, &sess.Title, &sess.AnthropicSessionID, &sess.CreatedAt, &sess.UpdatedAt,
-	)
-	return sess, err
+		RETURNING `+sessionFields,
+		userID, strings.TrimSpace(title), anthropicSessionID,
+	))
 }
 
 func (s *Store) GetSession(ctx context.Context, userID, sessionID string) (Session, error) {
-	const q = `
-		SELECT id::text, user_id::text, title, anthropic_session_id, created_at, updated_at
-		FROM agent_sessions
-		WHERE id = $1 AND user_id = $2
-	`
-	var sess Session
-	err := s.pool.QueryRow(ctx, q, sessionID, userID).Scan(
-		&sess.ID, &sess.UserID, &sess.Title, &sess.AnthropicSessionID, &sess.CreatedAt, &sess.UpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Session{}, apperrors.ErrNotFound
-		}
-		return Session{}, err
+	sess, err := scanSession(s.pool.QueryRow(ctx,
+		`SELECT `+sessionFields+` FROM agent_sessions WHERE id = $1 AND user_id = $2`,
+		sessionID, userID,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, apperrors.ErrNotFound
 	}
-	return sess, nil
+	return sess, err
 }
 
 func (s *Store) ListSessions(ctx context.Context, userID string) ([]Session, error) {
-	const q = `
-		SELECT id::text, user_id::text, title, anthropic_session_id, created_at, updated_at
-		FROM agent_sessions
-		WHERE user_id = $1
-		ORDER BY updated_at DESC
-		LIMIT 100
-	`
-	rows, err := s.pool.Query(ctx, q, userID)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+sessionFields+` FROM agent_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 100`,
+		userID,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []Session
+	out := []Session{}
 	for rows.Next() {
-		var sess Session
-		if err := rows.Scan(
-			&sess.ID, &sess.UserID, &sess.Title, &sess.AnthropicSessionID, &sess.CreatedAt, &sess.UpdatedAt,
-		); err != nil {
+		sess, err := scanSession(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, sess)
