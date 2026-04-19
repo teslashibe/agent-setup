@@ -4,27 +4,20 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
-	"github.com/teslashibe/agent-setup/backend/internal/httputil"
 )
 
-type Handler struct {
-	svc *Service
-}
+type Handler struct{ svc *Service }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
-}
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) GetMe(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-
 	user, err := h.svc.GetUser(c.UserContext(), userID)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-
 	return c.JSON(user)
 }

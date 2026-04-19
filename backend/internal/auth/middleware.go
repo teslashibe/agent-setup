@@ -7,7 +7,6 @@ import (
 	magiclink "github.com/teslashibe/magiclink-auth-go"
 
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
-	"github.com/teslashibe/agent-setup/backend/internal/httputil"
 )
 
 type Middleware struct {
@@ -16,35 +15,28 @@ type Middleware struct {
 }
 
 func NewMiddleware(magicSvc *magiclink.Service, authSvc *Service) *Middleware {
-	return &Middleware{
-		magicSvc: magicSvc,
-		authSvc:  authSvc,
-	}
+	return &Middleware{magicSvc: magicSvc, authSvc: authSvc}
 }
 
 func (m *Middleware) RequireAuth() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		authHeader := strings.TrimSpace(c.Get("Authorization"))
-		if authHeader == "" {
-			if token := strings.TrimSpace(c.Query("token")); token != "" {
-				authHeader = "Bearer " + token
+		header := strings.TrimSpace(c.Get("Authorization"))
+		if header == "" {
+			if t := strings.TrimSpace(c.Query("token")); t != "" {
+				header = "Bearer " + t
 			}
 		}
-
-		if authHeader == "" {
+		if header == "" {
 			return apperrors.Handle(c, apperrors.ErrUnauthorized)
 		}
-
-		userID, claims, err := m.magicSvc.AuthenticateBearer(c.UserContext(), authHeader)
+		userID, claims, err := m.magicSvc.AuthenticateBearer(c.UserContext(), header)
 		if err != nil {
 			return apperrors.Handle(c, apperrors.ErrUnauthorized)
 		}
-
 		if _, err := m.authSvc.GetUser(c.UserContext(), userID); err != nil {
 			return apperrors.Handle(c, err)
 		}
-
-		httputil.SetUserID(c, userID)
+		apperrors.SetUserID(c, userID)
 		c.Locals("auth_claims", claims)
 		return c.Next()
 	}

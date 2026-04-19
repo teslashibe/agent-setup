@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -11,103 +12,71 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
 )
 
+type User struct {
+	ID          string    `json:"id"`
+	IdentityKey string    `json:"identity_key"`
+	Email       string    `json:"email"`
+	Name        string    `json:"name"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Service struct {
 	pool *pgxpool.Pool
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
-}
+func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 
 func (s *Service) GetUser(ctx context.Context, userID string) (User, error) {
-	const query = `
+	var u User
+	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, identity_key, email, name, created_at, updated_at
-		FROM users
-		WHERE id = $1
-	`
-
-	var user User
-	err := s.pool.QueryRow(ctx, query, userID).Scan(
-		&user.ID,
-		&user.IdentityKey,
-		&user.Email,
-		&user.Name,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+		FROM users WHERE id = $1`, userID,
+	).Scan(&u.ID, &u.IdentityKey, &u.Email, &u.Name, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperrors.ErrNotFound
 		}
 		return User{}, err
 	}
-	return user, nil
+	return u, nil
 }
 
 func (s *Service) GetByEmail(ctx context.Context, email string) (User, error) {
-	const query = `
+	var u User
+	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, identity_key, email, name, created_at, updated_at
-		FROM users
-		WHERE email = $1
-	`
-
-	var user User
-	err := s.pool.QueryRow(ctx, query, strings.ToLower(strings.TrimSpace(email))).Scan(
-		&user.ID,
-		&user.IdentityKey,
-		&user.Email,
-		&user.Name,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+		FROM users WHERE email = $1`, strings.ToLower(strings.TrimSpace(email)),
+	).Scan(&u.ID, &u.IdentityKey, &u.Email, &u.Name, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperrors.ErrNotFound
 		}
 		return User{}, err
 	}
-	return user, nil
+	return u, nil
 }
 
 func (s *Service) UpsertIdentity(ctx context.Context, identityKey, email, name string) (User, error) {
-	const query = `
-		INSERT INTO users (identity_key, email, name)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (identity_key)
-		DO UPDATE SET
-			email = EXCLUDED.email,
-			name = EXCLUDED.name,
-			updated_at = NOW()
-		RETURNING id::text, identity_key, email, name, created_at, updated_at
-	`
-
 	cleanEmail := strings.ToLower(strings.TrimSpace(email))
 	cleanName := normalizeDisplayName(name, cleanEmail)
-
-	var user User
-	err := s.pool.QueryRow(ctx, query, strings.TrimSpace(identityKey), cleanEmail, cleanName).Scan(
-		&user.ID,
-		&user.IdentityKey,
-		&user.Email,
-		&user.Name,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-	if err != nil {
-		return User{}, err
-	}
-	return user, nil
+	var u User
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO users (identity_key, email, name) VALUES ($1, $2, $3)
+		ON CONFLICT (identity_key) DO UPDATE
+			SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = NOW()
+		RETURNING id::text, identity_key, email, name, created_at, updated_at`,
+		strings.TrimSpace(identityKey), cleanEmail, cleanName,
+	).Scan(&u.ID, &u.IdentityKey, &u.Email, &u.Name, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
 }
 
 func normalizeDisplayName(name, email string) string {
-	trimmedName := strings.TrimSpace(name)
-	if trimmedName != "" {
-		return trimmedName
+	if name = strings.TrimSpace(name); name != "" {
+		return name
 	}
-
-	localPart := strings.Split(strings.TrimSpace(email), "@")[0]
-	if localPart == "" {
-		return "User"
+	if parts := strings.Split(strings.TrimSpace(email), "@"); parts[0] != "" {
+		return parts[0]
 	}
-	return localPart
+	return "User"
 }

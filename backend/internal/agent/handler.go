@@ -10,7 +10,6 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
-	"github.com/teslashibe/agent-setup/backend/internal/httputil"
 )
 
 type Handler struct {
@@ -35,7 +34,7 @@ func (h *Handler) Mount(r fiber.Router, runLimiter ...fiber.Handler) {
 }
 
 func (h *Handler) CreateSession(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -53,7 +52,7 @@ func (h *Handler) CreateSession(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListSessions(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -68,7 +67,7 @@ func (h *Handler) ListSessions(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GetSession(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -80,7 +79,7 @@ func (h *Handler) GetSession(c *fiber.Ctx) error {
 }
 
 func (h *Handler) DeleteSession(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -91,7 +90,7 @@ func (h *Handler) DeleteSession(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListMessages(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -110,7 +109,7 @@ func (h *Handler) ListMessages(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Run(c *fiber.Ctx) error {
-	userID, err := httputil.CurrentUserID(c)
+	userID, err := apperrors.CurrentUserID(c)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
