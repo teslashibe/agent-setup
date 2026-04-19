@@ -1,36 +1,139 @@
 # claude-agent-go
 
-> The seed for shipping Claude-powered agent products.
-> One repo, one auth flow, one database, three surfaces: **Go API · iOS · Android · Web.**
+> The seed for shipping Claude-powered agent products to clients.
+> Built on **[Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview)**.
+> One repo. One auth flow. iOS + Android + Web from the same codebase.
 
 [![ci](https://github.com/teslashibe/agent-setup/actions/workflows/ci.yml/badge.svg)](https://github.com/teslashibe/agent-setup/actions/workflows/ci.yml)
 [![docker](https://github.com/teslashibe/agent-setup/actions/workflows/docker.yml/badge.svg)](https://github.com/teslashibe/agent-setup/actions/workflows/docker.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> **Use this template** → one repo, fully wired. Ship a Claude-powered product to a client in a day.
+> **Use this template** → spin up a new client repo. Customize. Deploy. Done in a day.
 
 ## Stack
 
-| Layer | Technology |
+| Layer | Tech |
 | --- | --- |
-| Backend | Go 1.23, [Fiber v2](https://github.com/gofiber/fiber), [pgx/v5](https://github.com/jackc/pgx) |
-| LLM | [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go) v1.37 with a hand-rolled tool-use loop |
-| Database | [TimescaleDB](https://github.com/timescale/timescaledb) (Postgres 16 + hypertable for messages) |
-| Migrations | [Goose v3](https://github.com/pressly/goose) (embedded SQL) |
+| Agent runtime | [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) — Anthropic runs the loop, container, and tools |
+| API | Go 1.25 · [Fiber v2](https://github.com/gofiber/fiber) · [pgx/v5](https://github.com/jackc/pgx) |
+| LLM SDK | [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go) (Beta Sessions) |
+| Database | [TimescaleDB](https://github.com/timescale/timescaledb) (Postgres 16) · [Goose](https://github.com/pressly/goose) migrations |
 | Auth | [`magiclink-auth-go`](https://github.com/teslashibe/magiclink-auth-go) — OTP + magic link, HS256 JWT |
 | Streaming | Server-Sent Events for agent runs |
-| Mobile + Web | [Expo SDK 55](https://expo.dev) (iOS, Android, **and Web** from one codebase) |
-| UI | NativeWind v4 + Tailwind, shadcn-style primitives |
-| Container | Multi-stage Dockerfile (Alpine) |
+| Mobile + Web | [Expo SDK 55](https://expo.dev) — iOS, Android, **and Web** from one codebase |
+| UI | NativeWind v4, shadcn-style primitives, dark theme |
+| Container | Multi-stage Alpine Dockerfile |
 | Cloud | Fly.io · Railway · GCP Cloud Run · Kubernetes |
 
-## Why this exists
+---
 
-Anthropic does not ship an official **Agent SDK** for Go (only TypeScript and Python). This repo gives you the same shape — sessions, tool-use loop, streaming, persistence — built directly on the official `anthropic-sdk-go`. No Node sidecar, no CLI subprocess.
+## Deploying a new client
 
-It's also a complete product seed: the same backend serves an **Expo app that runs on iOS, Android, and the Web** with shared auth and a streaming chat UI.
+This is the workflow you, the developer, follow to ship a new client product.
 
-This repo supersedes [`teslashibe/template-app`](https://github.com/teslashibe/template-app) (now archived). Everything from that repo is here, plus the Claude agent layer.
+### 1) Create the client repo from this template
+
+```bash
+gh repo create teslashibe/<client-name> \
+  --template teslashibe/agent-setup \
+  --private --clone
+
+cd <client-name>
+```
+
+You now have a complete working app. Everything below is per-client customization.
+
+### 2) Bootstrap dev
+
+```bash
+make setup
+```
+
+This copies `.env.example → backend/.env` and `npm install`s the mobile app.
+
+Open `backend/.env` and set:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+JWT_SECRET=$(openssl rand -hex 32)
+RESEND_API_KEY=re_...           # for production magic-link emails
+```
+
+### 3) Provision the client's Anthropic Agent
+
+Each client gets their **own Anthropic Agent + Environment**. This is what defines the AI's persona, model, and available tools.
+
+Edit `backend/.env` and set the system prompt:
+
+```bash
+AGENT_SYSTEM_PROMPT="You are <Client>'s expert assistant. You help with X, Y, Z..."
+```
+
+Then run:
+
+```bash
+make managed-agents-provision
+```
+
+This prints two IDs — paste them into `backend/.env`:
+
+```bash
+ANTHROPIC_AGENT_ID=agent_011...
+ANTHROPIC_ENVIRONMENT_ID=env_01...
+```
+
+The Agent now has bash, web search/fetch, file ops, and code execution available out of the box. To customize tools further, update the Agent in the [Anthropic Console](https://platform.claude.com/) — or re-run `provision` with a different system prompt and replace the IDs.
+
+### 4) Brand the app
+
+Edit `mobile/app.config.ts`:
+
+```typescript
+name: "Client Name",
+slug: "client-name",
+scheme: "clientapp",
+ios:     { bundleIdentifier: "com.client.app" },
+android: { package:          "com.client.app" },
+```
+
+Edit `mobile/.env.example`:
+```bash
+EXPO_PUBLIC_APP_SLUG=clientapp
+```
+
+Adjust theme colors in `mobile/tailwind.config.js` and `mobile/theme/tokens.ts`.
+
+### 5) Run locally
+
+```bash
+make dev-all       # API on :8080, Expo Web on :8081
+# or:
+make up            # full stack in Docker
+make dev-mobile    # Expo iOS/Android dev server (scan QR with Expo Go)
+```
+
+Sign in: enter any email at the welcome screen → check the API logs for the OTP → enter it.
+
+### 6) Deploy backend
+
+Pick the cloud target. Configs are in `deploy/`:
+
+| Target | One-liner |
+| --- | --- |
+| **Fly.io** (recommended for speed) | `fly launch && fly secrets set ANTHROPIC_API_KEY=... ANTHROPIC_AGENT_ID=... ANTHROPIC_ENVIRONMENT_ID=... JWT_SECRET=... RESEND_API_KEY=... && fly deploy` |
+| **Railway** | Push to GitHub → connect repo → set env vars → auto-deploy |
+| **GCP Cloud Run** | See [`deploy/cloudrun.md`](./deploy/cloudrun.md) |
+| **Kubernetes** | `cp deploy/k8s/secret.example.yaml deploy/k8s/secret.yaml && fill it in && kubectl apply -k deploy/k8s/` |
+
+For the database, use [Timescale Cloud](https://www.timescale.com/cloud) — set `DATABASE_URL` to its connection string in your secrets.
+
+### 7) Ship the mobile app
+
+For TestFlight / Play Store, EAS Build is the simplest path. See [issue #4](https://github.com/teslashibe/agent-setup/issues/4) — `eas.json` will land in v0.3.x.
+
+For now, **Expo Web** at the deployed URL works on iOS Safari and Android Chrome with no app store needed.
+
+---
 
 ## Repository layout
 
@@ -39,67 +142,31 @@ agent-setup/
 ├── backend/
 │   ├── cmd/
 │   │   ├── server/        # Fiber API entrypoint
-│   │   └── migrate/       # Goose migration runner (embedded SQL)
-│   ├── internal/
-│   │   ├── agent/         # Anthropic client + tool-use loop + SSE + persistence
-│   │   ├── apperrors/, auth/, bootstrap/, config/, db/, httputil/
-│   │   └── db/migrations/   # *.sql goose files (embedded)
-│   └── Dockerfile
-├── mobile/                # Expo app — iOS, Android, AND web
-│   ├── app/               # expo-router routes
-│   │   ├── (auth)/        # magic-link sign-in
-│   │   └── (app)/
-│   │       ├── index.tsx        # Sessions list
-│   │       ├── chat/[id].tsx    # Streaming chat (SSE)
-│   │       └── settings.tsx
-│   ├── components/, providers/, services/, theme/
-│   └── app.config.ts
+│   │   ├── migrate/       # Goose runner (up/down/status/reset)
+│   │   └── provision/     # One-time: create Anthropic Agent + Environment
+│   └── internal/
+│       ├── agent/         # Managed Agents service, store, handler, model
+│       ├── apperrors/     # Typed errors + Fiber ErrorHandler + UserID helper
+│       ├── auth/          # Magic-link auth: service, middleware, handler
+│       ├── config/        # All env vars in one place
+│       └── db/migrations/ # 00001_init.sql (the only schema file)
+├── mobile/                # Expo Router app — iOS, Android, Web
+│   ├── app/(auth)/        # Magic-link sign-in
+│   ├── app/(app)/         # Sessions list + streaming chat
+│   ├── components/ui/     # NativeWind primitives
+│   ├── providers/         # AuthSessionProvider
+│   └── services/          # api.ts, auth.ts, agent.ts (SSE consumer)
 ├── deploy/
 │   ├── fly.toml
 │   ├── railway.toml
 │   ├── cloudrun.md
 │   └── k8s/
-├── .github/workflows/
+├── .github/workflows/     # ci.yml + docker.yml
 ├── docker-compose.yml
 └── Makefile
 ```
 
-## Quickstart
-
-### 1) Prerequisites
-
-- Go 1.23+
-- Node.js 20+
-- Docker + Docker Compose
-- An `ANTHROPIC_API_KEY` ([console.anthropic.com](https://console.anthropic.com))
-
-### 2) Setup
-
-```bash
-make setup
-# edit backend/.env, set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-### 3) Run
-
-```bash
-make dev-all      # API on :8080 + Expo Web on :8081
-# or:
-make up           # full stack in Docker
-make dev-mobile   # Expo iOS/Android dev server
-```
-
-Then open:
-
-- **API:** [http://localhost:8080/health](http://localhost:8080/health)
-- **Web app:** [http://localhost:8081](http://localhost:8081)
-- **Mobile:** scan the Expo QR with Expo Go
-
-### 4) Use it
-
-1. Open the web/mobile app → enter any email → check the API logs for the OTP code (dev sender prints it) → sign in.
-2. Tap **New** to create a chat.
-3. Send a message like *"What time is it in Tokyo?"* — watch the streaming response and the `get_current_time` tool call render in real-time.
+---
 
 ## API
 
@@ -117,57 +184,103 @@ Then open:
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/me` | Current user |
-| `POST` | `/api/agent/sessions` | Create a session |
+| `POST` | `/api/agent/sessions` | Create a session (provisions Anthropic session under the hood) |
 | `GET` | `/api/agent/sessions` | List your sessions |
-| `GET` | `/api/agent/sessions/:id/messages` | Replay a session |
-| `POST` | `/api/agent/sessions/:id/run` | Send a message; **streams SSE** |
+| `GET` | `/api/agent/sessions/:id` | Get one session |
+| `DELETE` | `/api/agent/sessions/:id` | Delete a session |
+| `GET` | `/api/agent/sessions/:id/messages` | Replay full chat history (from Anthropic) |
+| `POST` | `/api/agent/sessions/:id/run` | Send a message; **streams SSE** of agent events |
 
-## Adding tools
+### SSE event shape
 
-Tools live in `backend/internal/agent/tools.go`. Implement the `Tool` interface and register it in `DefaultRegistry`:
-
-```go
-type Tool interface {
-    Name() string
-    Description() string
-    InputSchema() map[string]any
-    Execute(ctx context.Context, input json.RawMessage) (any, error)
-}
+```jsonc
+{ "type": "tool_use",    "tool": "web_search", "tool_id": "sevt_…" }
+{ "type": "tool_result", "tool_id": "sevt_…",  "is_error": false }
+{ "type": "text",        "text": "Sure, here's what I found…" }
+{ "type": "done" }
+{ "type": "error",       "error": "..." }
 ```
 
-A `get_current_time` example tool ships with the boilerplate.
+---
 
-## Adding migrations
+## Configuration
+
+All runtime config is environment variables. Defaults are in [`backend/internal/config/config.go`](./backend/internal/config/config.go).
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Postgres / TimescaleDB connection string |
+| `JWT_SECRET` | yes (prod) | HS256 signing secret — `openssl rand -hex 32` |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key |
+| `ANTHROPIC_AGENT_ID` | yes | From `make managed-agents-provision` |
+| `ANTHROPIC_ENVIRONMENT_ID` | yes | From `make managed-agents-provision` |
+| `AGENT_SYSTEM_PROMPT` | provision-only | The agent's persona |
+| `AGENT_RUN_RATE_LIMIT` | no (default 10) | Requests per window per user on `/run` |
+| `AGENT_RUN_RATE_WINDOW_SECONDS` | no (default 60) | Rate limit window |
+| `RESEND_API_KEY` | for prod email | If unset, OTP codes log to stdout (dev mode) |
+| `AUTH_EMAIL_FROM` | for prod email | The "From" address for magic-link emails |
+| `APP_URL` | yes (prod) | Public URL of the deployed API |
+| `CORS_ALLOWED_ORIGINS` | yes (prod) | Comma-separated list of allowed origins |
+| `MOBILE_APP_SCHEME` | for deep links | URL scheme registered in `app.config.ts` |
+| `PORT` | no (default 8080) | API listen port |
+
+---
+
+## Common tasks
 
 ```bash
-make migrate-create NAME=add_widgets
+# Run the API + web together (host)
+make dev-all
+
+# Full stack in Docker
+make up
+make logs
+make down
+
+# Database
+make db-shell                # psql in the postgres container
+make db-reset                # destroy + recreate + migrate
+
+# Migrations (we're in dev; edit 00001_init.sql in place + db-reset)
 make migrate
+
+# Backend tests + typecheck
+make test
+make lint
+make typecheck               # mobile tsc
+
+# Build everything
+make build
+
+# Get a dev JWT
+make token
 ```
 
-## Cloud deployment
-
-| Target | Config | Notes |
-| --- | --- | --- |
-| **Fly.io** | `deploy/fly.toml` | `fly launch && fly secrets set ANTHROPIC_API_KEY=… && fly deploy` |
-| **Railway** | `deploy/railway.toml` | Push to GitHub → auto-deploy |
-| **GCP Cloud Run** | `deploy/cloudrun.md` | Image + Timescale Cloud or self-managed Postgres |
-| **Kubernetes** | `deploy/k8s/` | `kubectl apply -k deploy/k8s` |
-
-For managed TimescaleDB, use [Timescale Cloud](https://www.timescale.com/cloud) and set `DATABASE_URL`.
+---
 
 ## Architecture
 
-This is the **one template** — no upstream to sync from, no separate base repo.
+This is the **single template** — `template-app` was archived in favour of this repo. See [issue #1](https://github.com/teslashibe/agent-setup/issues/1) for full notes.
 
 ```
 magiclink-auth-go    ← Go module, shared auth library
         ↓
-agent-setup          ← this repo: THE template (GitHub Template Repo)
+agent-setup          ← THE template (this repo)
         ↓  "Use this template"
 client repos         ← one per client, customized
 ```
 
-Fork per client using the "Use this template" button. See [issue #1](https://github.com/teslashibe/agent-setup/issues/1) for full architecture notes.
+Updates to the seed flow downstream by `git merge upstream/main` in client repos. Anthropic Agent + Environment are provisioned per-client and live in the client's Anthropic account.
+
+---
+
+## Open issues / roadmap
+
+- [#2](https://github.com/teslashibe/agent-setup/issues/2) — Auto-generate session title from first message ✅ done in v0.2.0
+- [#3](https://github.com/teslashibe/agent-setup/issues/3) — `DELETE /api/agent/sessions/:id` ✅ done in v0.2.0
+- [#4](https://github.com/teslashibe/agent-setup/issues/4) — EAS build config for App Store / Play Store
+
+---
 
 ## License
 
