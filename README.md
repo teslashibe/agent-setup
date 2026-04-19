@@ -14,16 +14,15 @@
 
 | Layer | Tech |
 | --- | --- |
-| Agent runtime | [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) — Anthropic runs the loop, container, and tools |
+| Agent runtime | [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) — Anthropic hosts the long-running agent harness, runs the tool-use loop, and provides bash/web/file tools in a managed container |
+| Anthropic client | [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go) — used **only** for Beta endpoints (`Beta.Agents`, `Beta.Sessions`, `Beta.Sessions.Events`). No `Messages` API, no hand-rolled tool loop. |
 | API | Go 1.25 · [Fiber v2](https://github.com/gofiber/fiber) · [pgx/v5](https://github.com/jackc/pgx) |
-| LLM SDK | [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go) (Beta Sessions) |
 | Database | [TimescaleDB](https://github.com/timescale/timescaledb) (Postgres 16) · [Goose](https://github.com/pressly/goose) migrations |
 | Auth | [`magiclink-auth-go`](https://github.com/teslashibe/magiclink-auth-go) — OTP + magic link, HS256 JWT |
 | Streaming | Server-Sent Events for agent runs |
 | Mobile + Web | [Expo SDK 55](https://expo.dev) — iOS, Android, **and Web** from one codebase |
 | UI | NativeWind v4, shadcn-style primitives, dark theme |
-| Container | Multi-stage Alpine Dockerfile |
-| Cloud | Fly.io · Railway · GCP Cloud Run · Kubernetes |
+| Container | Multi-stage Alpine Dockerfile, image published to GHCR |
 
 ---
 
