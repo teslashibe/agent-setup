@@ -1,27 +1,34 @@
 # claude-agent-go
 
-An open-source boilerplate for building Claude-powered agent backends in **Go**.
+> The seed for shipping Claude-powered agent products.
+> One repo, one auth flow, one database, three surfaces: **Go API · iOS · Android · Web.**
 
-Cloud-deployable, batteries-included, opinionated.
+[![ci](https://github.com/teslashibe/agent-setup/actions/workflows/ci.yml/badge.svg)](https://github.com/teslashibe/agent-setup/actions/workflows/ci.yml)
+[![docker](https://github.com/teslashibe/agent-setup/actions/workflows/docker.yml/badge.svg)](https://github.com/teslashibe/agent-setup/actions/workflows/docker.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
+> **Use this template** → clone the seed and ship a client agent product end-to-end.
 
 ## Stack
 
 | Layer | Technology |
 | --- | --- |
-| Language | Go 1.23 |
-| HTTP | [Fiber v2](https://github.com/gofiber/fiber) |
-| LLM | [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go) (official) with a hand-rolled tool-use loop |
-| Database | [TimescaleDB](https://github.com/timescale/timescaledb) (Postgres 16 + hypertables for messages) |
-| DB driver | [`pgx/v5`](https://github.com/jackc/pgx) |
+| Backend | Go 1.23, [Fiber v2](https://github.com/gofiber/fiber), [pgx/v5](https://github.com/jackc/pgx) |
+| LLM | [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go) v1.37 with a hand-rolled tool-use loop |
+| Database | [TimescaleDB](https://github.com/timescale/timescaledb) (Postgres 16 + hypertable for messages) |
 | Migrations | [Goose v3](https://github.com/pressly/goose) (embedded SQL) |
 | Auth | [`magiclink-auth-go`](https://github.com/teslashibe/magiclink-auth-go) — OTP + magic link, HS256 JWT |
-| Streaming | Server-Sent Events (SSE) for agent runs |
-| Container | Multi-stage Dockerfile (distroless-style alpine) |
-| Orchestration | docker-compose for local; Fly.io / Cloud Run / Railway / K8s for prod |
+| Streaming | Server-Sent Events for agent runs |
+| Mobile + Web | [Expo SDK 55](https://expo.dev) (iOS, Android, **and Web** from one codebase) |
+| UI | NativeWind v4 + Tailwind, shadcn-style primitives |
+| Container | Multi-stage Dockerfile (Alpine) |
+| Cloud | Fly.io · Railway · GCP Cloud Run · Kubernetes |
 
 ## Why this exists
 
-Anthropic does not ship an official "Agent SDK" for Go (only TypeScript and Python). This repo gives you the same shape — sessions, tool-use loop, streaming, persistence — built on top of the official `anthropic-sdk-go` client. No Node.js sidecar, no CLI subprocess, no surprises in production.
+Anthropic does not ship an official **Agent SDK** for Go (only TypeScript and Python). This repo gives you the same shape — sessions, tool-use loop, streaming, persistence — built directly on the official `anthropic-sdk-go`. No Node sidecar, no CLI subprocess.
+
+It's also a complete product seed: the same backend serves an **Expo app that runs on iOS, Android, and the Web** with shared auth and a streaming chat UI.
 
 ## Repository layout
 
@@ -33,14 +40,18 @@ agent-setup/
 │   │   └── migrate/       # Goose migration runner (embedded SQL)
 │   ├── internal/
 │   │   ├── agent/         # Anthropic client + tool-use loop + SSE + persistence
-│   │   ├── apperrors/
-│   │   ├── auth/          # Magic-link + JWT middleware
-│   │   ├── bootstrap/
-│   │   ├── config/
-│   │   ├── db/
-│   │   │   └── migrations/  # *.sql goose files (embedded)
-│   │   └── httputil/
+│   │   ├── apperrors/, auth/, bootstrap/, config/, db/, httputil/
+│   │   └── db/migrations/   # *.sql goose files (embedded)
 │   └── Dockerfile
+├── mobile/                # Expo app — iOS, Android, AND web
+│   ├── app/               # expo-router routes
+│   │   ├── (auth)/        # magic-link sign-in
+│   │   └── (app)/
+│   │       ├── index.tsx        # Sessions list
+│   │       ├── chat/[id].tsx    # Streaming chat (SSE)
+│   │       └── settings.tsx
+│   ├── components/, providers/, services/, theme/
+│   └── app.config.ts
 ├── deploy/
 │   ├── fly.toml
 │   ├── railway.toml
@@ -56,6 +67,7 @@ agent-setup/
 ### 1) Prerequisites
 
 - Go 1.23+
+- Node.js 20+
 - Docker + Docker Compose
 - An `ANTHROPIC_API_KEY` ([console.anthropic.com](https://console.anthropic.com))
 
@@ -63,25 +75,29 @@ agent-setup/
 
 ```bash
 make setup
-# edit backend/.env and set ANTHROPIC_API_KEY=sk-ant-...
+# edit backend/.env, set ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ### 3) Run
 
 ```bash
-make up      # full stack in Docker
-# or
-make dev     # API on host, Timescale + migrations in Docker
+make dev-all      # API on :8080 + Expo Web on :8081
+# or:
+make up           # full stack in Docker
+make dev-mobile   # Expo iOS/Android dev server
 ```
 
-The API will be on [http://localhost:8080](http://localhost:8080).
+Then open:
 
-### 4) Get a dev token
+- **API:** [http://localhost:8080/health](http://localhost:8080/health)
+- **Web app:** [http://localhost:8081](http://localhost:8081)
+- **Mobile:** scan the Expo QR with Expo Go
 
-```bash
-make token
-# returns { "jwt": "..." }
-```
+### 4) Use it
+
+1. Open the web/mobile app → enter any email → check the API logs for the OTP code (dev sender prints it) → sign in.
+2. Tap **New** to create a chat.
+3. Send a message like *"What time is it in Tokyo?"* — watch the streaming response and the `get_current_time` tool call render in real-time.
 
 ## API
 
@@ -89,38 +105,20 @@ make token
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/auth/magic-link` | Send OTP + magic link to email |
+| `POST` | `/auth/magic-link` | Send OTP + magic link |
 | `POST` | `/auth/verify` | Exchange OTP for JWT |
-| `GET` | `/auth/verify?token=...` | Magic-link click handler |
+| `GET` | `/auth/verify?token=…` | Magic-link click handler |
 | `POST` | `/auth/login` | **Dev only** — issue JWT directly |
 
-### Agent (all require `Authorization: Bearer <jwt>`)
+### Agent (require `Authorization: Bearer <jwt>`)
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/me` | Current user |
-| `POST` | `/api/agent/sessions` | Create a new session |
+| `POST` | `/api/agent/sessions` | Create a session |
 | `GET` | `/api/agent/sessions` | List your sessions |
 | `GET` | `/api/agent/sessions/:id/messages` | Replay a session |
-| `POST` | `/api/agent/sessions/:id/run` | Send a message; **streams SSE** of agent events |
-
-### Example: chat with the agent
-
-```bash
-TOKEN=$(make -s token | jq -r .jwt)
-
-# Create a session
-SESSION=$(curl -s -X POST http://localhost:8080/api/agent/sessions \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"title":"hello world"}' | jq -r .id)
-
-# Stream a run
-curl -N -X POST http://localhost:8080/api/agent/sessions/$SESSION/run \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"What time is it in Tokyo?"}'
-```
+| `POST` | `/api/agent/sessions/:id/run` | Send a message; **streams SSE** |
 
 ## Adding tools
 
@@ -141,24 +139,23 @@ A `get_current_time` example tool ships with the boilerplate.
 
 ```bash
 make migrate-create NAME=add_widgets
-# writes backend/internal/db/migrations/<timestamp>_add_widgets.sql
 make migrate
 ```
 
-Migration files use the [Goose](https://github.com/pressly/goose) annotated SQL format.
-
 ## Cloud deployment
-
-The `deploy/` folder contains starter configs for the four most common targets:
 
 | Target | Config | Notes |
 | --- | --- | --- |
-| **Fly.io** | `deploy/fly.toml` | Easiest. `fly launch --no-deploy && fly secrets set ANTHROPIC_API_KEY=... && fly deploy` |
+| **Fly.io** | `deploy/fly.toml` | `fly launch && fly secrets set ANTHROPIC_API_KEY=… && fly deploy` |
 | **Railway** | `deploy/railway.toml` | Push to GitHub → auto-deploy |
-| **GCP Cloud Run** | `deploy/cloudrun.md` | Container image + Cloud SQL Postgres with Timescale extension |
-| **Kubernetes** | `deploy/k8s/` | Plain manifests — `kubectl apply -k deploy/k8s` |
+| **GCP Cloud Run** | `deploy/cloudrun.md` | Image + Timescale Cloud or self-managed Postgres |
+| **Kubernetes** | `deploy/k8s/` | `kubectl apply -k deploy/k8s` |
 
-For managed Timescale, use [Timescale Cloud](https://www.timescale.com/cloud) and set `DATABASE_URL` accordingly.
+For managed TimescaleDB, use [Timescale Cloud](https://www.timescale.com/cloud) and set `DATABASE_URL`.
+
+## Architecture
+
+See [issue #1](https://github.com/teslashibe/agent-setup/issues/1) for the layered architecture and roadmap. TL;DR: this repo is a **GitHub Template Repository**. Fork it per client, customize, ship. Reusable code that needs to flow downstream lives in versioned packages (Go modules + npm packages) — extracted only when a real second consumer needs them.
 
 ## License
 

@@ -9,3 +9,11 @@ backend/bin/
 tmp/
 dist/
 coverage.out
+
+# mobile / Expo
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/dist/
+mobile/web-build/
+mobile/.env.local
