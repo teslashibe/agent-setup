@@ -1,0 +1,13 @@
+# Go Backend Conventions
+
+- Keep backend code inside `backend/internal/`.
+- Domain packages should follow `handler.go`, `service.go`, `model.go`.
+- Handlers should stay thin: parse request, call service, return JSON.
+- Use `pgx` with raw SQL. Do not introduce an ORM.
+- Use typed app errors via `internal/apperrors`.
+- Keep route registration centralized in `cmd/server/main.go`.
+- Prefer constructor injection (`NewService`, `NewHandler`) over globals.
+- Keep migration files as annotated goose SQL in `internal/db/migrations/` (single file, `-- +goose Up` / `-- +goose Down`).
+- Agent tools live in `internal/agent/tools.go` — implement the `Tool` interface, register in `DefaultRegistry`.
+- The agent loop is in `internal/agent/service.go` — do not add business logic there; add tools instead.
+- Stream agent runs as SSE — never buffer the full response before sending.

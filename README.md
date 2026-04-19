@@ -7,7 +7,7 @@
 [![docker](https://github.com/teslashibe/agent-setup/actions/workflows/docker.yml/badge.svg)](https://github.com/teslashibe/agent-setup/actions/workflows/docker.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> **Use this template** → clone the seed and ship a client agent product end-to-end.
+> **Use this template** → one repo, fully wired. Ship a Claude-powered product to a client in a day.
 
 ## Stack
 
@@ -29,6 +29,8 @@
 Anthropic does not ship an official **Agent SDK** for Go (only TypeScript and Python). This repo gives you the same shape — sessions, tool-use loop, streaming, persistence — built directly on the official `anthropic-sdk-go`. No Node sidecar, no CLI subprocess.
 
 It's also a complete product seed: the same backend serves an **Expo app that runs on iOS, Android, and the Web** with shared auth and a streaming chat UI.
+
+This repo supersedes [`teslashibe/template-app`](https://github.com/teslashibe/template-app) (now archived). Everything from that repo is here, plus the Claude agent layer.
 
 ## Repository layout
 
@@ -155,7 +157,17 @@ For managed TimescaleDB, use [Timescale Cloud](https://www.timescale.com/cloud) 
 
 ## Architecture
 
-See [issue #1](https://github.com/teslashibe/agent-setup/issues/1) for the layered architecture and roadmap. TL;DR: this repo is a **GitHub Template Repository**. Fork it per client, customize, ship. Reusable code that needs to flow downstream lives in versioned packages (Go modules + npm packages) — extracted only when a real second consumer needs them.
+This is the **one template** — no upstream to sync from, no separate base repo.
+
+```
+magiclink-auth-go    ← Go module, shared auth library
+        ↓
+agent-setup          ← this repo: THE template (GitHub Template Repo)
+        ↓  "Use this template"
+client repos         ← one per client, customized
+```
+
+Fork per client using the "Use this template" button. See [issue #1](https://github.com/teslashibe/agent-setup/issues/1) for full architecture notes.
 
 ## License
 

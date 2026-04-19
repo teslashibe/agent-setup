@@ -1,0 +1,13 @@
+# Expo Mobile Conventions
+
+- Use Expo Router route groups: `(auth)` and `(app)`.
+- Keep auth/session state in `providers/AuthSessionProvider.tsx`.
+- Use `services/api.ts` for all network requests.
+- Inject token access through `setAccessTokenProvider` instead of importing context in services.
+- Build reusable primitives in `components/ui/`.
+- Prefer NativeWind `className` styling for component-level UI.
+- Keep design tokens in `theme/tokens.ts`.
+- Use `expo-secure-store` for native token storage and web fallback for browser.
+- Agent sessions live in `services/agent.ts` — use the `runSession` async generator for SSE streaming.
+- Chat screens go in `app/(app)/chat/[id].tsx` — always show tool_use and tool_result blocks inline.
+- Never poll for agent responses — always stream via SSE.
