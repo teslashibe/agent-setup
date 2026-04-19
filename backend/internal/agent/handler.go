@@ -23,12 +23,17 @@ func NewHandler(svc *Service) *Handler {
 
 // Mount registers the agent routes under the provided fiber.Router.
 // All routes assume the parent router has already enforced authentication.
-func (h *Handler) Mount(r fiber.Router) {
+// runLimiter is applied only to the /run endpoint to guard Anthropic spend.
+func (h *Handler) Mount(r fiber.Router, runLimiter ...fiber.Handler) {
 	r.Post("/agent/sessions", h.CreateSession)
 	r.Get("/agent/sessions", h.ListSessions)
 	r.Get("/agent/sessions/:id", h.GetSession)
 	r.Get("/agent/sessions/:id/messages", h.ListMessages)
-	r.Post("/agent/sessions/:id/run", h.Run)
+	if len(runLimiter) > 0 && runLimiter[0] != nil {
+		r.Post("/agent/sessions/:id/run", runLimiter[0], h.Run)
+	} else {
+		r.Post("/agent/sessions/:id/run", h.Run)
+	}
 }
 
 type createSessionRequest struct {

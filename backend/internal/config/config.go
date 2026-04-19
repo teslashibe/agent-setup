@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -21,6 +22,8 @@ type Config struct {
 	AnthropicMaxTokens  int
 	AgentMaxIterations  int
 	AgentSystemPrompt   string
+	AgentRunRateLimit   int
+	AgentRunRateWindow  time.Duration
 }
 
 func Load() Config {
@@ -39,6 +42,8 @@ func Load() Config {
 		AnthropicMaxTokens: getEnvInt("ANTHROPIC_MAX_TOKENS", 4096),
 		AgentMaxIterations: getEnvInt("AGENT_MAX_TOOL_ITERATIONS", 10),
 		AgentSystemPrompt:  getEnv("AGENT_SYSTEM_PROMPT", "You are a helpful assistant."),
+		AgentRunRateLimit:  getEnvInt("AGENT_RUN_RATE_LIMIT", 10),
+		AgentRunRateWindow: time.Duration(getEnvInt("AGENT_RUN_RATE_WINDOW_SECONDS", 60)) * time.Second,
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	magiclink "github.com/teslashibe/magiclink-auth-go"
@@ -71,9 +72,25 @@ func main() {
 	app.Get("/auth/verify", fiberadapter.VerifyLinkHandler(magicSvc))
 	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc))
 
+	runLimiter := limiter.New(limiter.Config{
+		Max:        core.Cfg.AgentRunRateLimit,
+		Expiration: core.Cfg.AgentRunRateWindow,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			if id, ok := c.Locals("user_id").(string); ok && id != "" {
+				return "run:" + id
+			}
+			return "run:" + c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "rate limit exceeded — please wait before sending another message",
+			})
+		},
+	})
+
 	api := app.Group("/api", authMW.RequireAuth())
 	api.Get("/me", authHandler.GetMe)
-	agentHandler.Mount(api)
+	agentHandler.Mount(api, runLimiter)
 
 	errCh := make(chan error, 1)
 	go func() {
