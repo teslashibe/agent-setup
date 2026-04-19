@@ -135,7 +135,7 @@ export default function WelcomeScreen() {
         </CardContent>
       </Card>
       <Text variant="muted" className="mt-4 text-center">
-        Claude Agent Go uses passwordless authentication with short-lived verification codes.
+        Sign in with a secure one-time code. No password needed.
       </Text>
     </KeyboardAvoidingView>
   );

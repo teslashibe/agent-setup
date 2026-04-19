@@ -16,7 +16,7 @@ type AuthSessionContextValue = {
   getAccessToken: () => Promise<string | null>;
 };
 
-const TOKEN_KEY = "agent_app_token";
+const TOKEN_KEY = `${process.env.EXPO_PUBLIC_APP_SLUG ?? "app"}_token`;
 
 const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
 
