@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help setup setup-mobile up down restart logs dev dev-db dev-mobile dev-web dev-all build test lint fmt tidy typecheck migrate migrate-down migrate-status migrate-create db-shell db-reset seed token clean
+.PHONY: help setup setup-mobile up down restart logs dev dev-db dev-mobile dev-web dev-all build test lint fmt tidy typecheck migrate migrate-down migrate-status migrate-create db-shell db-reset seed token clean sync-upstream
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -97,3 +97,7 @@ token: seed ## Alias for seed
 clean: ## Remove generated artifacts
 	$(COMPOSE) down -v
 	rm -rf backend/bin mobile/node_modules mobile/.expo
+
+sync-upstream: ## Merge latest changes from template-app into this repo
+	git fetch upstream
+	git merge upstream/main
