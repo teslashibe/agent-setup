@@ -13,17 +13,22 @@ import (
 )
 
 type Service struct {
-	cfg    config.Config
-	store  *Store
-	client anthropic.Client
+	cfg         config.Config
+	store       *Store
+	client      anthropic.Client
+	provisioner *Provisioner
 }
 
+// NewService constructs the agent service.
+//
+// The (cfg.AnthropicAgentID, cfg.AnthropicEnvID) pair is the historical
+// shared-agent fallback used when no per-user [Provisioner] has been
+// installed via [Service.UseProvisioner]. With MCP integration the
+// recommended setup is to install a Provisioner so each user gets their own
+// Agent + Environment + MCP toolset.
 func NewService(cfg config.Config, store *Store) (*Service, error) {
-	switch {
-	case cfg.AnthropicAPIKey == "":
+	if cfg.AnthropicAPIKey == "" {
 		return nil, errors.New("ANTHROPIC_API_KEY is required")
-	case cfg.AnthropicAgentID == "" || cfg.AnthropicEnvID == "":
-		return nil, errors.New("ANTHROPIC_AGENT_ID and ANTHROPIC_ENVIRONMENT_ID are required — run: make managed-agents-provision")
 	}
 	return &Service{
 		cfg:    cfg,
@@ -32,14 +37,39 @@ func NewService(cfg config.Config, store *Store) (*Service, error) {
 	}, nil
 }
 
+// UseProvisioner installs a per-user agent provisioner. When set,
+// CreateSession lazily provisions an Anthropic Agent + Environment for the
+// user (idempotent) and uses those IDs instead of the static cfg values.
+func (s *Service) UseProvisioner(p *Provisioner) { s.provisioner = p }
+
+// Client returns the underlying Anthropic client. Useful for the
+// provisioner constructor in main.go to avoid re-instantiating the client.
+func (s *Service) Client() anthropic.Client { return s.client }
+
 func (s *Service) Store() *Store { return s.store }
 
 // CreateSession provisions an Anthropic Managed Agent session and stores the
-// mapping in our database, scoped to the active team.
+// mapping in our database, scoped to the active team. When a per-user
+// [Provisioner] is installed it is used to look up (or lazily create) that
+// user's Agent + Environment IDs. Otherwise the shared cfg.AnthropicAgentID /
+// cfg.AnthropicEnvID pair is used.
 func (s *Service) CreateSession(ctx context.Context, teamID, userID, title string) (Session, error) {
+	agentID := s.cfg.AnthropicAgentID
+	envID := s.cfg.AnthropicEnvID
+	if s.provisioner != nil {
+		ua, err := s.provisioner.EnsureForUser(ctx, userID)
+		if err != nil {
+			return Session{}, fmt.Errorf("ensure user agent: %w", err)
+		}
+		agentID, envID = ua.AgentID, ua.EnvironmentID
+	}
+	if agentID == "" || envID == "" {
+		return Session{}, errors.New("agent: no agent provisioned — set ANTHROPIC_AGENT_ID/ANTHROPIC_ENVIRONMENT_ID or install a Provisioner")
+	}
+
 	antSess, err := s.client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(s.cfg.AnthropicAgentID)},
-		EnvironmentID: s.cfg.AnthropicEnvID,
+		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agentID)},
+		EnvironmentID: envID,
 	})
 	if err != nil {
 		return Session{}, fmt.Errorf("create anthropic session: %w", err)

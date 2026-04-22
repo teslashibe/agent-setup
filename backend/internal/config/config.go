@@ -38,6 +38,37 @@ type Config struct {
 	// Spec: "5 attempts / minute per IP to slow token enumeration".
 	TeamsAcceptRateLimit  int
 	TeamsAcceptRateWindow time.Duration
+
+	// CredentialsEncryptionKey is the 32-byte AES-256 key used to encrypt
+	// platform_credentials.credential at rest. Required when at least one
+	// MCP-exposing platform is configured. Provide as a 64-char hex string
+	// or a 44-char URL-safe base64 (with padding) string. In production,
+	// inject via a sealed Kubernetes Secret.
+	CredentialsEncryptionKey string
+
+	// MCPPublicURL is the externally-reachable origin Anthropic-managed
+	// agents will use to reach this server's MCP endpoint. Defaults to
+	// AppURL. Override only when AppURL points at a non-public hostname
+	// (e.g. when the API is split behind two ingresses).
+	MCPPublicURL string
+
+	// MCPDefaultPageLimit is the default value applied when a tool input
+	// omits a `limit` field. Defaults to 10 (per spec; biases towards
+	// minimal token usage in the common case).
+	MCPDefaultPageLimit int
+
+	// MCPMaxItemsPerPage caps the size of any list response returned from
+	// an MCP tool, regardless of what the underlying scraper returned.
+	// Defaults to 50.
+	MCPMaxItemsPerPage int
+
+	// MCPMaxStringLen truncates any string field in a tool result to this
+	// many runes. Applied recursively. Default 800 (per spec).
+	MCPMaxStringLen int
+
+	// MCPMaxResponseBytes caps the total compact-JSON byte size of any
+	// tool response. Set to 0 to disable. Default 32 KiB.
+	MCPMaxResponseBytes int
 }
 
 func Load() Config {
@@ -67,6 +98,13 @@ func Load() Config {
 		TeamsInviteRateWindow: time.Duration(getEnvInt("TEAMS_INVITE_RATE_WINDOW_SECONDS", 3600)) * time.Second,
 		TeamsAcceptRateLimit:  getEnvInt("TEAMS_ACCEPT_RATE_LIMIT", 5),
 		TeamsAcceptRateWindow: time.Duration(getEnvInt("TEAMS_ACCEPT_RATE_WINDOW_SECONDS", 60)) * time.Second,
+
+		CredentialsEncryptionKey: strings.TrimSpace(os.Getenv("CREDENTIALS_ENCRYPTION_KEY")),
+		MCPPublicURL:             strings.TrimSpace(os.Getenv("MCP_PUBLIC_URL")),
+		MCPDefaultPageLimit:      getEnvInt("MCP_DEFAULT_PAGE_LIMIT", 10),
+		MCPMaxItemsPerPage:       getEnvInt("MCP_MAX_ITEMS_PER_PAGE", 50),
+		MCPMaxStringLen:          getEnvInt("MCP_MAX_STRING_LEN", 800),
+		MCPMaxResponseBytes:      getEnvInt("MCP_MAX_RESPONSE_BYTES", 32*1024),
 	}
 }
 

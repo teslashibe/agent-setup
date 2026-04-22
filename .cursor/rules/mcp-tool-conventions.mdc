@@ -1,0 +1,122 @@
+---
+description: Conventions for adding/editing MCP tools across teslashibe scraper packages and agent-setup.
+globs: ["**/mcp/**/*.go", "**/internal/mcp/**/*.go", "**/mcp/platforms/**/*.go"]
+alwaysApply: false
+---
+
+# MCP tool conventions
+
+These conventions apply to two surfaces:
+
+1. The `mcp/` subpackage inside every scraper repo (`linkedin-go/mcp/…`,
+   `x-go/mcp/…`, …).
+2. `agent-setup/backend/internal/mcp/` (transport, registry, response
+   shaper) and `agent-setup/backend/internal/mcp/platforms/` (per-platform
+   bindings).
+
+The `mcptool` package (`github.com/teslashibe/mcptool`) is the shared
+contract. Treat it as upstream — update there first when behaviour needs to
+change for every package.
+
+## Tool definition (per-package `mcp/`)
+
+- ALWAYS use `mcptool.Define[*pkg.Client, InputT]` to construct tools. Do
+  not hand-write `mcptool.Tool{}`. `Define` reflects the JSON schema from
+  `InputT` so it can never drift from the Go input.
+- `Name` is `"<platform>_<verb>_<noun>"` in snake_case
+  (e.g. `linkedin_search_people`, `x_create_tweet`). Verbs are imperative.
+- `Description` is one sentence ≤ 120 chars, ending with a period. Mention
+  pagination/limits if relevant.
+- `WrapsMethod` is the bare method name on `*Client` (e.g. `"SearchPeople"`).
+  Empty only for tools that aggregate or wrap a package-level function.
+- Define one `InputT` struct per tool. Use `json` and `jsonschema` tags:
+
+  ```go
+  type SearchPeopleInput struct {
+      Query string `json:"query" jsonschema:"description=keywords or name,required"`
+      Limit int    `json:"limit,omitempty" jsonschema:"minimum=1,maximum=50,default=10"`
+  }
+  ```
+
+  `default=10`, `minimum=1`, `maximum=50` are the agent-setup-wide
+  defaults. Tools that page natively should keep them in sync.
+- Group tools by domain in separate files (`search.go`, `profile.go`, …)
+  and assemble them in `mcp.go` via `Provider.Tools()`.
+
+## Excluded methods (`excluded.go`)
+
+Every method on `*Client` must be either wrapped by a tool or listed in
+`Excluded` with a one-line reason:
+
+```go
+var Excluded = map[string]string{
+    "SetUserAgent":  "configuration helper, not user-callable",
+    "Close":         "lifecycle method owned by the host",
+}
+```
+
+The package's `mcp_test.go` must run
+`mcptool.AssertCoverage(t, &pkg.Client{}, Provider{}.Tools(), Excluded)` so
+adding a new method without exposure breaks CI.
+
+## Response shaping
+
+- Prefer **summary shapes** for list endpoints: `{id, title, author,
+  score, created_at}` — full object via a separate `get_*` tool.
+- Use `mcptool.PageOf[T]` for paginated list responses (returns
+  `{items, next_cursor, truncated}`).
+- Truncate long free-text fields with `mcptool.TruncateString(s, 800)`.
+- Prefer `omitempty` on every JSON-tagged field in response structs so
+  null/empty values don't waste tokens.
+- Never call `log.Printf` from tool handlers — return structured errors so
+  the agent can act on them.
+
+## Errors
+
+- Return `*mcptool.Error{Code, Message, Retryable, Data}` for everything
+  the user/agent can act on. Generic Go errors map to `internal_error`.
+- Codes are snake_case lowercase (e.g. `credential_expired`, `rate_limited`,
+  `not_found`, `invalid_input`). Reuse existing codes before inventing new
+  ones.
+- Set `Retryable=true` only for transient infra errors. Setting it for
+  bad input causes infinite agent loops.
+- Use `Data` for actionable hints (e.g. `{"reconnect_url":
+  "/settings/platforms/linkedin"}`).
+
+## agent-setup wiring (`internal/mcp/platforms/`)
+
+- A new platform is one entry in `platforms.All()` plus one factory
+  function in this file. Do not import scraper packages from anywhere else
+  in agent-setup.
+- The `NewClient` factory must:
+  - Parse the credential blob with `parseCredential`.
+  - Validate every required cookie/token field explicitly with a typed
+    error (`return nil, errors.New("X credential missing 'foo'")`).
+  - Construct the upstream client with the verified inputs only — never
+    silently fall back on empty values.
+- The `Validator` paired with the binding must check the same required
+  fields with cheap structural checks (no network calls). Network-level
+  validation happens lazily inside `NewClient` at first tool call.
+- Platform IDs are lowercase snake_case (`x_viral`, `reddit_viral`,
+  `producthunt`). They are used in URLs (`/api/platforms/:platform/...`)
+  so they must be URL-safe.
+
+## Transport (`internal/mcp/transport.go`)
+
+- The MCP route group is `/mcp/v1` (JSON-RPC 2.0 over HTTP). Per-user
+  paths use `/mcp/u/:token/v1`; the JWT in `:token` is validated by
+  `auth.RequirePathAuth("token")`.
+- Response shaping is applied uniformly by `ResponseShaper` in
+  `internal/mcp/shape.go` — do not duplicate truncation logic in tools or
+  in the transport.
+- New JSON-RPC methods go in `Transport.dispatch`. Keep them thin; real
+  logic belongs on `Server`.
+
+## Cursor agent etiquette
+
+- When you add a method to a scraper `*Client`, you must in the same PR
+  either (a) add a tool that wraps it, or (b) add it to `Excluded` with a
+  reason. Don't merge red.
+- When you change a tool's input struct, bump the package's minor
+  version. Schema is part of the wire contract.
+- Run `go test ./mcp/...` after any tool/`*Client` change.

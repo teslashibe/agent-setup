@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, Send, Wrench } from "lucide-react-native";
 
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Text } from "@/components/ui/Text";
 import { listMessages, runSession, type AgentEvent, type Message } from "@/services/agent";
@@ -304,31 +305,35 @@ function Bubble({ bubble }: { bubble: ChatBubble }) {
 
   return (
     <View className="self-start max-w-[90%] gap-2">
-      {bubble.tools.map((tool) => (
-        <Card key={tool.id}>
-          <CardContent className="gap-1">
-            <View className="flex-row items-center gap-2">
-              <Wrench size={14} color={tool.isError ? "#FF5A67" : "#00D4AA"} />
-              <Text variant="small" className="font-semibold">
-                {tool.name}
-              </Text>
-              <Badge variant={tool.isError ? "destructive" : tool.done ? "default" : "secondary"}>
-                {tool.isError ? "error" : tool.done ? "done" : "running"}
-              </Badge>
-            </View>
-            {tool.input !== undefined ? (
-              <Text variant="muted" className="text-xs">
-                input: {safeJson(tool.input)}
-              </Text>
-            ) : null}
-            {tool.done ? (
-              <Text variant="muted" className="text-xs">
-                output: {safeJson(tool.output)}
-              </Text>
-            ) : null}
-          </CardContent>
-        </Card>
-      ))}
+      {bubble.tools.map((tool) => {
+        const credIssue = tool.isError ? detectCredentialIssue(tool.output) : null;
+        return (
+          <Card key={tool.id}>
+            <CardContent className="gap-1">
+              <View className="flex-row items-center gap-2">
+                <Wrench size={14} color={tool.isError ? "#FF5A67" : "#00D4AA"} />
+                <Text variant="small" className="font-semibold">
+                  {tool.name}
+                </Text>
+                <Badge variant={tool.isError ? "destructive" : tool.done ? "default" : "secondary"}>
+                  {tool.isError ? "error" : tool.done ? "done" : "running"}
+                </Badge>
+              </View>
+              {tool.input !== undefined ? (
+                <Text variant="muted" className="text-xs">
+                  input: {safeJson(tool.input)}
+                </Text>
+              ) : null}
+              {tool.done ? (
+                <Text variant="muted" className="text-xs">
+                  output: {safeJson(tool.output)}
+                </Text>
+              ) : null}
+              {credIssue ? <ReconnectCTA platform={credIssue.platform} reason={credIssue.reason} /> : null}
+            </CardContent>
+          </Card>
+        );
+      })}
       {bubble.text.length > 0 || showCursor ? (
         <View className="rounded-2xl border border-border bg-card px-4 py-2">
           <Text variant="small">
@@ -349,4 +354,52 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+const CREDENTIAL_ERROR_CODES = new Set([
+  "credential_missing",
+  "credential_invalid",
+  "credential_expired",
+  "credential_unreadable"
+]);
+
+/** When an MCP tool returns a structured credential error, surface a
+ * "Reconnect" CTA inline with the failed tool card. The MCP server
+ * (`internal/mcp/server.go → mapErr`) emits errors of the shape:
+ *   { code: "credential_expired", platform: "linkedin", retryable: true }
+ * possibly wrapped inside a JSON-RPC `data` field. We probe several
+ * shapes so we degrade gracefully if the wire format evolves. */
+function detectCredentialIssue(output: unknown): { platform: string; reason: string } | null {
+  if (!output || typeof output !== "object") return null;
+  const candidates: any[] = [output as any];
+  if ((output as any).data) candidates.push((output as any).data);
+  if (typeof (output as any).text === "string") {
+    try {
+      candidates.push(JSON.parse((output as any).text));
+    } catch {
+      /* not JSON — give up */
+    }
+  }
+  for (const c of candidates) {
+    if (!c || typeof c !== "object") continue;
+    const code = String(c.code ?? c.error ?? "");
+    if (CREDENTIAL_ERROR_CODES.has(code) && typeof c.platform === "string" && c.platform) {
+      return { platform: c.platform, reason: String(c.message ?? code) };
+    }
+  }
+  return null;
+}
+
+function ReconnectCTA({ platform, reason }: { platform: string; reason: string }) {
+  const router = useRouter();
+  return (
+    <View className="mt-1 gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2">
+      <Text variant="small" className="text-destructive">
+        {platform} credentials need re-connecting: {reason}
+      </Text>
+      <Button size="sm" variant="destructive" onPress={() => router.push("/(app)/platforms")}>
+        Reconnect {platform}
+      </Button>
+    </View>
+  );
 }

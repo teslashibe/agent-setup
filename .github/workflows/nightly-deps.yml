@@ -1,0 +1,94 @@
+name: nightly-deps
+
+# Runs `go get -u ./... && go test ./...` against the latest minor of every
+# in-scope teslashibe scraper package. If anything breaks (compile error,
+# test failure, or coverage-test miss because the upstream added a public
+# method without exposing it via MCP), open or update an issue tagged
+# `dependency-drift` so the team sees the regression within 24h.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  bump-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: backend/go.sum
+
+      - name: Upgrade scraper deps + mcptool
+        run: |
+          set -e
+          mods=(
+            github.com/teslashibe/mcptool
+            github.com/teslashibe/linkedin-go
+            github.com/teslashibe/x-go
+            github.com/teslashibe/x-viral-go
+            github.com/teslashibe/reddit-go
+            github.com/teslashibe/redditviral-go
+            github.com/teslashibe/hn-go
+            github.com/teslashibe/facebook-go
+            github.com/teslashibe/instagram-go
+            github.com/teslashibe/tiktok-go
+            github.com/teslashibe/producthunt-go
+            github.com/teslashibe/nextdoor-go
+            github.com/teslashibe/elevenlabs-go
+            github.com/teslashibe/codegen-go
+          )
+          for m in "${mods[@]}"; do
+            echo "::group::go get -u $m"
+            go get -u "$m" || echo "::warning::failed to upgrade $m"
+            echo "::endgroup::"
+          done
+          go mod tidy
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test (with coverage tests baked into scraper modules)
+        run: go test ./...
+
+      - name: Regenerate MCP inventory and check
+        run: |
+          go run ./cmd/mcp-inventory > ../docs/mcp-inventory.md
+          if ! git diff --quiet -- ../docs/mcp-inventory.md; then
+            echo "::warning::MCP inventory drifted; commit the regenerated docs/mcp-inventory.md"
+          fi
+
+      - name: Open / update drift issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'Nightly dep upgrade broke build / tests';
+            const body = `The nightly dep-bump workflow failed. See: ${context.payload.repository.html_url}/actions/runs/${context.runId}\n\nThis usually means an upstream scraper added a public method without exposing it via its \`mcp/\` subpackage, or made a breaking change to a constructor signature. Triage path:\n\n1. Identify which package change caused the failure (see workflow logs)\n2. Either upgrade \`agent-setup\` to match, or downgrade the dependency until the upstream is fixed\n3. If the upstream needs a fix, open a PR there to add the missing tool / restore the constructor`;
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'dependency-drift'
+            });
+            if (existing.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['dependency-drift']
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `Failure recurred: ${context.payload.repository.html_url}/actions/runs/${context.runId}`
+              });
+            }
