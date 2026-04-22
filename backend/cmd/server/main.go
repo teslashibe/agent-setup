@@ -86,16 +86,50 @@ func main() {
 	if cfg.TeamsEnabled {
 		teams.NewHandler(teamsSvc, teamMW).Mount(api)
 
-		invitesH := invites.NewHandler(invitesSvc, teamMW)
-		invitesH.MountUserRoutes(api)
+		// Per-route rate limits per spec §"Rate limits":
+		//   - invite create  : per (team, hour) — slows admin email spam.
+		//   - preview/accept : per IP, per minute — slows token enumeration.
+		inviteCreateLimiter := limiter.New(limiter.Config{
+			Max:        cfg.TeamsInviteRateLimit,
+			Expiration: cfg.TeamsInviteRateWindow,
+			KeyGenerator: func(c *fiber.Ctx) string {
+				return "invite-create:" + apperrors.TeamID(c)
+			},
+			LimitReached: func(c *fiber.Ctx) error {
+				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+					"error": "invite rate limit exceeded for this team — try again later",
+				})
+			},
+		})
+		acceptLimiter := limiter.New(limiter.Config{
+			Max:        cfg.TeamsAcceptRateLimit,
+			Expiration: cfg.TeamsAcceptRateWindow,
+			KeyGenerator: func(c *fiber.Ctx) string { return "invite-accept:" + c.IP() },
+			LimitReached: func(c *fiber.Ctx) error {
+				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+					"error": "too many invite attempts — please slow down",
+				})
+			},
+		})
+
+		invitesH := invites.NewHandler(invitesSvc, teamMW).WithLimiters(invites.Limiters{
+			Create: inviteCreateLimiter,
+			Accept: acceptLimiter,
+		})
+
+		// Authenticated accept routes live under /api/invites (auth group).
+		invitesH.MountAuthAPIRoutes(api)
 
 		// Per-team invite routes share /api/teams/:teamID's RequireTeamFromParam
 		// so admins can list / create / revoke invites for the team they own.
 		teamScoped := api.Group("/teams/:teamID", teamMW.RequireTeamFromParam("teamID"))
 		invitesH.MountTeamRoutes(teamScoped)
 
-		// Public landing page; no auth required so email recipients can land
-		// here and be deep-linked into the mobile app.
+		// PUBLIC: preview routes mounted on `app` directly so unauthenticated
+		// landing pages (mobile + web) can render the invite before sign-in.
+		invitesH.MountPublicAPIRoutes(app)
+
+		// Public HTML landing page that deep-links into the mobile app.
 		invitesH.MountPublicRoutes(app, cfg.MobileAppScheme)
 	}
 

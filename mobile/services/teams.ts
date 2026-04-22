@@ -103,10 +103,10 @@ export async function leaveTeam(teamID: string): Promise<void> {
   await request<void>(`/api/teams/${teamID}/members/me`, { method: "DELETE" });
 }
 
-export async function transferOwnership(teamID: string, newOwnerUserID: string): Promise<void> {
+export async function transferOwnership(teamID: string, toUserID: string): Promise<void> {
   await request<void>(`/api/teams/${teamID}/transfer-ownership`, {
     method: "POST",
-    body: JSON.stringify({ new_owner_user_id: newOwnerUserID }),
+    body: JSON.stringify({ to_user_id: toUserID }),
   });
 }
 
@@ -137,22 +137,24 @@ export async function revokeInvite(teamID: string, inviteID: string): Promise<vo
 }
 
 // previewInvite is unauthenticated so the invite landing screen can render the
-// team name/role before the recipient signs in.
+// team name/role before the recipient signs in. Hits the spec-shaped path
+// `GET /api/invites/:token`.
 export async function previewInvite(token: string): Promise<{
   team: { id: string; name: string };
   email: string;
   role: TeamRole;
   expires_at: string;
 }> {
-  return request(`/api/invites/preview?token=${encodeURIComponent(token)}`, {
+  return request(`/api/invites/${encodeURIComponent(token)}`, {
     method: "GET",
     auth: false,
   });
 }
 
+// acceptInvite hits the spec-shaped path `POST /api/invites/:token/accept`.
+// The auth check + email-match check happens server-side.
 export async function acceptInvite(token: string): Promise<{ team: Team; role: TeamRole }> {
-  return request(`/api/invites/accept`, {
+  return request(`/api/invites/${encodeURIComponent(token)}/accept`, {
     method: "POST",
-    body: JSON.stringify({ token }),
   });
 }

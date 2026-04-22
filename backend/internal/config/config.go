@@ -28,6 +28,16 @@ type Config struct {
 	TeamsDefaultMaxSeats int
 	TeamsInviteTTL       time.Duration
 	TeamsInviteFromName  string
+
+	// TeamsInviteRateLimit caps invite-creation attempts per (team, hour).
+	// Spec: "10 invites / hour per team".
+	TeamsInviteRateLimit  int
+	TeamsInviteRateWindow time.Duration
+
+	// TeamsAcceptRateLimit caps invite preview + accept attempts per IP.
+	// Spec: "5 attempts / minute per IP to slow token enumeration".
+	TeamsAcceptRateLimit  int
+	TeamsAcceptRateWindow time.Duration
 }
 
 func Load() Config {
@@ -52,6 +62,11 @@ func Load() Config {
 		TeamsDefaultMaxSeats: getEnvInt("TEAMS_DEFAULT_MAX_SEATS", 25),
 		TeamsInviteTTL:       time.Duration(getEnvInt("TEAMS_INVITE_TTL_HOURS", 168)) * time.Hour,
 		TeamsInviteFromName:  getEnv("TEAMS_INVITE_FROM_NAME", "Agent App"),
+
+		TeamsInviteRateLimit:  getEnvInt("TEAMS_INVITE_RATE_LIMIT", 10),
+		TeamsInviteRateWindow: time.Duration(getEnvInt("TEAMS_INVITE_RATE_WINDOW_SECONDS", 3600)) * time.Second,
+		TeamsAcceptRateLimit:  getEnvInt("TEAMS_ACCEPT_RATE_LIMIT", 5),
+		TeamsAcceptRateWindow: time.Duration(getEnvInt("TEAMS_ACCEPT_RATE_WINDOW_SECONDS", 60)) * time.Second,
 	}
 }
 

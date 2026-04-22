@@ -31,10 +31,12 @@ func (h *Handler) Mount(api fiber.Router) {
 	t.Get("/", h.Get)
 	t.Patch("/", RequireRole(RoleAdmin), h.UpdateName)
 	t.Delete("/", RequireRole(RoleOwner), h.Delete)
-	t.Post("/leave", h.Leave)
 	t.Post("/transfer-ownership", RequireRole(RoleOwner), h.TransferOwnership)
 
 	t.Get("/members", h.ListMembers)
+	// "me" must be matched before ":userID" so /members/me hits Leave instead
+	// of being interpreted as a remove-member with id="me".
+	t.Delete("/members/me", h.Leave)
 	t.Patch("/members/:userID", RequireRole(RoleAdmin), h.ChangeMemberRole)
 	t.Delete("/members/:userID", RequireRole(RoleAdmin), h.RemoveMember)
 }
@@ -101,8 +103,21 @@ func (h *Handler) Leave(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+// transferReq accepts the spec field `to_user_id` and a couple of legacy
+// aliases so older mobile clients (and earlier scaffolding) keep working.
 type transferReq struct {
-	UserID string `json:"user_id"`
+	ToUserID        string `json:"to_user_id"`
+	UserID          string `json:"user_id"`
+	NewOwnerUserID  string `json:"new_owner_user_id"`
+}
+
+func (r transferReq) target() string {
+	for _, v := range []string{r.ToUserID, r.UserID, r.NewOwnerUserID} {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func (h *Handler) TransferOwnership(c *fiber.Ctx) error {
@@ -110,10 +125,11 @@ func (h *Handler) TransferOwnership(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return apperrors.New(fiber.StatusBadRequest, "invalid request body")
 	}
-	if strings.TrimSpace(req.UserID) == "" {
-		return apperrors.New(fiber.StatusBadRequest, "user_id is required")
+	target := req.target()
+	if target == "" {
+		return apperrors.New(fiber.StatusBadRequest, "to_user_id is required")
 	}
-	if err := h.svc.TransferOwnership(c.UserContext(), apperrors.UserID(c), apperrors.TeamID(c), req.UserID); err != nil {
+	if err := h.svc.TransferOwnership(c.UserContext(), apperrors.UserID(c), apperrors.TeamID(c), target); err != nil {
 		return err
 	}
 	return c.SendStatus(fiber.StatusNoContent)
