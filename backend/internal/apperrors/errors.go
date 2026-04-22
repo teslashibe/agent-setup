@@ -23,6 +23,27 @@ var (
 	ErrNotFound     = New(http.StatusNotFound, "not found")
 	ErrBadRequest   = New(http.StatusBadRequest, "bad request")
 	ErrForbidden    = New(http.StatusForbidden, "forbidden")
+
+	// Team / membership errors.
+	ErrTeamNotFound         = New(http.StatusNotFound, "team not found")
+	ErrNotTeamMember        = New(http.StatusForbidden, "not a member of this team")
+	ErrInsufficientRole     = New(http.StatusForbidden, "your role does not permit this action")
+	ErrCannotRemoveOwner    = New(http.StatusBadRequest, "owner cannot be removed; transfer ownership first")
+	ErrCannotLeavePersonal  = New(http.StatusBadRequest, "cannot leave your personal team")
+	ErrCannotDeletePersonal = New(http.StatusBadRequest, "cannot delete your personal team")
+	ErrSeatLimitReached     = New(http.StatusBadRequest, "team has reached its seat limit")
+	ErrAlreadyMember        = New(http.StatusConflict, "user is already a member of this team")
+	ErrOwnerExists          = New(http.StatusConflict, "team already has an owner")
+	ErrPersonalTeamExists   = New(http.StatusConflict, "user already has a personal team")
+	ErrFeatureDisabled      = New(http.StatusNotFound, "feature is not enabled in this deployment")
+
+	// Invite errors.
+	ErrInviteNotFound        = New(http.StatusNotFound, "invite not found")
+	ErrInviteExpired         = New(http.StatusGone, "invite expired")
+	ErrInviteAlreadyAccepted = New(http.StatusConflict, "invite already accepted")
+	ErrInviteRevoked         = New(http.StatusGone, "invite revoked")
+	ErrInvitePending         = New(http.StatusConflict, "an active invite for this email already exists")
+	ErrEmailMismatch         = New(http.StatusForbidden, "this invite was sent to a different email")
 )
 
 // FiberHandler is the centralized Fiber error handler. Wire it via
