@@ -10,10 +10,12 @@ import {
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, Mail, RotateCw, Trash2, UserMinus, UserPlus } from "lucide-react-native";
 
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Dialog } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
+import { RoleBadge } from "@/components/ui/RoleBadge";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import { Separator } from "@/components/ui/Separator";
 import { Text } from "@/components/ui/Text";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
@@ -30,19 +32,17 @@ import {
   removeMember,
   resendInvite,
   revokeInvite,
-  roleAtLeast,
   type TeamMember,
   type TeamRole,
   updateMemberRole,
 } from "@/services/teams";
 
 const roleOrder: Record<TeamRole, number> = { owner: 0, admin: 1, member: 2 };
-const roleLabel: Record<TeamRole, string> = { owner: "Owner", admin: "Admin", member: "Member" };
-const roleVariant: Record<TeamRole, "default" | "secondary" | "outline"> = {
-  owner: "default",
-  admin: "secondary",
-  member: "outline",
-};
+
+const inviteRoleOptions: SelectOption<Exclude<TeamRole, "owner">>[] = [
+  { value: "member", label: "Member", description: "Read + use the agent" },
+  { value: "admin", label: "Admin", description: "Manage members + invites" },
+];
 
 export default function TeamDetailScreen() {
   const router = useRouter();
@@ -50,7 +50,7 @@ export default function TeamDetailScreen() {
   const teamID = Array.isArray(id) ? id[0] : id;
 
   const { user } = useAuthSession();
-  const { setActive, refresh: refreshMemberships } = useTeams();
+  const { setActive, refresh: refreshMemberships, canIn } = useTeams();
 
   const [membership, setMembership] = useState<Membership | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -62,10 +62,24 @@ export default function TeamDetailScreen() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<Exclude<TeamRole, "owner">>("member");
   const [creatingInvite, setCreatingInvite] = useState(false);
+  // Dialog state — one at a time. Storing the target object on the state
+  // avoids closures over stale .map() iteration variables.
+  const [removeTarget, setRemoveTarget] = useState<TeamMember | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<Invite | null>(null);
+  const [showLeave, setShowLeave] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
 
+  // All client-side gates funnel through canIn() — see TeamsProvider.resolveCan
+  // for the central rule table that mirrors the server's permission checks.
   const role = membership?.role;
-  const canManage = roleAtLeast(role, "admin");
   const isOwner = role === "owner";
+  const canInviteCreate = canIn(membership, "invites.create");
+  const canInviteList = canIn(membership, "invites.list") && canIn(membership, "invites.create");
+  const canChangeRole = canIn(membership, "members.changeRole");
+  const canRemoveMember = canIn(membership, "members.remove");
+  const canLeave = canIn(membership, "members.leave");
+  const canDelete = canIn(membership, "team.delete");
 
   // Whenever this screen is focused, switch the active team to match the URL.
   // That way the header / sidebar's "active team" pill stays in sync with what
@@ -84,8 +98,9 @@ export default function TeamDetailScreen() {
       setMembers(
         [...mems].sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.email.localeCompare(b.email)),
       );
-      // Only admins+ can list pending invites server-side.
-      if (roleAtLeast(m.role, "admin")) {
+      // Only admins+ can list pending invites server-side; mirror that gate
+      // here so we don't waste a request that we know will 403.
+      if (canIn(m, "invites.list")) {
         const inv = await listInvites(teamID);
         setInvites(inv);
       } else {
@@ -98,7 +113,7 @@ export default function TeamDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [teamID]);
+  }, [teamID, canIn]);
 
   useEffect(() => {
     void load();
@@ -198,13 +213,17 @@ export default function TeamDetailScreen() {
       Alert.alert("Cannot leave", "You can't leave your personal team.");
       return;
     }
+    setActionBusy(true);
     try {
       await leaveTeam(teamID);
       await refreshMemberships();
+      setShowLeave(false);
       router.replace("/(app)/teams");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to leave";
       Alert.alert("Leave failed", message);
+    } finally {
+      setActionBusy(false);
     }
   }, [teamID, membership, refreshMemberships, router]);
 
@@ -214,15 +233,44 @@ export default function TeamDetailScreen() {
       Alert.alert("Cannot delete", "Personal teams can't be deleted.");
       return;
     }
+    setActionBusy(true);
     try {
       await deleteTeam(teamID);
       await refreshMemberships();
+      setShowDelete(false);
       router.replace("/(app)/teams");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to delete";
       Alert.alert("Delete failed", message);
+    } finally {
+      setActionBusy(false);
     }
   }, [teamID, membership, refreshMemberships, router]);
+
+  // confirmRemoveMember + confirmRevokeInvite drive the Dialog from the row
+  // buttons below. Splitting "show the prompt" from "actually do the work"
+  // keeps the per-row click handlers tiny and reuses handleRemove/handleRevoke.
+  const confirmRemoveMember = useCallback(async () => {
+    if (!removeTarget) return;
+    setActionBusy(true);
+    try {
+      await handleRemove(removeTarget);
+      setRemoveTarget(null);
+    } finally {
+      setActionBusy(false);
+    }
+  }, [removeTarget, handleRemove]);
+
+  const confirmRevokeInvite = useCallback(async () => {
+    if (!revokeTarget) return;
+    setActionBusy(true);
+    try {
+      await handleRevoke(revokeTarget);
+      setRevokeTarget(null);
+    } finally {
+      setActionBusy(false);
+    }
+  }, [revokeTarget, handleRevoke]);
 
   if (loading) {
     return (
@@ -268,7 +316,7 @@ export default function TeamDetailScreen() {
           <Text variant="h2" numberOfLines={1} className="flex-1">
             {membership.team.name}
           </Text>
-          <Badge variant={roleVariant[membership.role]}>{roleLabel[membership.role]}</Badge>
+          <RoleBadge role={membership.role} />
         </View>
         <Text variant="muted">{membership.team.slug}</Text>
       </View>
@@ -282,12 +330,14 @@ export default function TeamDetailScreen() {
           {members.map((m, idx) => {
             const isMe = m.user_id === user?.id;
             const ownerActingOnSelf = isOwner && isMe;
-            // Owners can demote/remove anyone but themselves; admins can manage
-            // members only (not other admins or the owner).
+            // Owners can manage anyone but themselves; admins can manage
+            // members only (not other admins or the owner). canRemoveMember
+            // gives us the role tier; the per-row checks scope the target.
             const canActOn =
-              canManage &&
+              canRemoveMember &&
               !ownerActingOnSelf &&
               (isOwner ? m.role !== "owner" : m.role === "member");
+            const canPromoteThisMember = canChangeRole && canActOn && isOwner;
             return (
               <View key={m.user_id}>
                 {idx > 0 ? <Separator /> : null}
@@ -301,10 +351,10 @@ export default function TeamDetailScreen() {
                     </Text>
                   </View>
                   <View className="flex-row items-center gap-2">
-                    <Badge variant={roleVariant[m.role]}>{roleLabel[m.role]}</Badge>
+                    <RoleBadge role={m.role} />
                     {canActOn ? (
                       <>
-                        {m.role === "member" && isOwner ? (
+                        {m.role === "member" && canPromoteThisMember ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -314,7 +364,7 @@ export default function TeamDetailScreen() {
                             Make admin
                           </Button>
                         ) : null}
-                        {m.role === "admin" && isOwner ? (
+                        {m.role === "admin" && canPromoteThisMember ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -328,16 +378,7 @@ export default function TeamDetailScreen() {
                           size="sm"
                           variant="destructive"
                           loading={busyMember === m.user_id}
-                          onPress={() =>
-                            Alert.alert(
-                              "Remove member",
-                              `Remove ${m.email} from ${membership.team.name}?`,
-                              [
-                                { text: "Cancel", style: "cancel" },
-                                { text: "Remove", style: "destructive", onPress: () => handleRemove(m) },
-                              ],
-                            )
-                          }
+                          onPress={() => setRemoveTarget(m)}
                           icon={<UserMinus size={14} color="#06070A" />}
                         >
                           Remove
@@ -353,7 +394,7 @@ export default function TeamDetailScreen() {
       </Card>
 
       {/* Invites */}
-      {canManage ? (
+      {canInviteCreate ? (
         <Card className="mb-4">
           <CardHeader>
             <CardTitle>Invite a teammate</CardTitle>
@@ -368,18 +409,20 @@ export default function TeamDetailScreen() {
               keyboardType="email-address"
               placeholder="teammate@example.com"
             />
-            <View className="flex-row items-center gap-2">
+            <View className="gap-2">
               <Text variant="small" className="text-muted">
-                Role:
+                Role
               </Text>
-              <Pressable onPress={() => setInviteRole("member")}>
-                <Badge variant={inviteRole === "member" ? "default" : "outline"}>Member</Badge>
-              </Pressable>
-              {isOwner ? (
-                <Pressable onPress={() => setInviteRole("admin")}>
-                  <Badge variant={inviteRole === "admin" ? "default" : "outline"}>Admin</Badge>
-                </Pressable>
-              ) : null}
+              <Select<Exclude<TeamRole, "owner">>
+                value={inviteRole}
+                onValueChange={setInviteRole}
+                // Only owners can grant admin (mirrors server canActOn).
+                options={
+                  isOwner
+                    ? inviteRoleOptions
+                    : inviteRoleOptions.filter((o) => o.value === "member")
+                }
+              />
             </View>
             <Button
               icon={<UserPlus size={14} color="#06070A" />}
@@ -392,7 +435,7 @@ export default function TeamDetailScreen() {
         </Card>
       ) : null}
 
-      {canManage && invites.length > 0 ? (
+      {canInviteList && invites.length > 0 ? (
         <Card className="mb-4">
           <CardHeader>
             <CardTitle>Pending invites ({invites.length})</CardTitle>
@@ -414,7 +457,7 @@ export default function TeamDetailScreen() {
                     </Text>
                   </View>
                   <View className="flex-row items-center gap-2">
-                    <Badge variant={roleVariant[inv.role]}>{roleLabel[inv.role]}</Badge>
+                    <RoleBadge role={inv.role} />
                     <Button
                       size="sm"
                       variant="outline"
@@ -428,16 +471,7 @@ export default function TeamDetailScreen() {
                       size="sm"
                       variant="destructive"
                       loading={busyInvite === inv.id}
-                      onPress={() =>
-                        Alert.alert(
-                          "Revoke invite",
-                          `Revoke pending invite for ${inv.email}?`,
-                          [
-                            { text: "Cancel", style: "cancel" },
-                            { text: "Revoke", style: "destructive", onPress: () => handleRevoke(inv) },
-                          ],
-                        )
-                      }
+                      onPress={() => setRevokeTarget(inv)}
                       icon={<Trash2 size={14} color="#06070A" />}
                     >
                       Revoke
@@ -456,44 +490,74 @@ export default function TeamDetailScreen() {
           <CardTitle>Danger zone</CardTitle>
         </CardHeader>
         <CardContent>
-          {!membership.team.is_personal ? (
-            <Button
-              variant="destructive"
-              onPress={() =>
-                Alert.alert(
-                  "Leave team",
-                  `Leave ${membership.team.name}?`,
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Leave", style: "destructive", onPress: handleLeave },
-                  ],
-                )
-              }
-            >
+          {canLeave ? (
+            <Button variant="destructive" onPress={() => setShowLeave(true)}>
               Leave team
             </Button>
-          ) : (
+          ) : membership.team.is_personal ? (
             <Text variant="muted">This is your personal team and cannot be left or deleted.</Text>
-          )}
-          {isOwner && !membership.team.is_personal ? (
-            <Button
-              variant="destructive"
-              onPress={() =>
-                Alert.alert(
-                  "Delete team",
-                  `Delete ${membership.team.name} and all its data? This cannot be undone.`,
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Delete", style: "destructive", onPress: handleDelete },
-                  ],
-                )
-              }
-            >
+          ) : null}
+          {canDelete ? (
+            <Button variant="destructive" onPress={() => setShowDelete(true)}>
               Delete team
             </Button>
           ) : null}
         </CardContent>
       </Card>
+
+      {/* Confirmation dialogs — Dialog primitive replaces Alert.alert so the
+          UI works on web + matches the app's dark theme on iOS / Android. */}
+      <Dialog
+        open={Boolean(removeTarget)}
+        onOpenChange={(o) => (o ? null : setRemoveTarget(null))}
+        title="Remove member"
+        description={
+          removeTarget
+            ? `Remove ${removeTarget.email} from ${membership.team.name}?`
+            : ""
+        }
+        confirmLabel="Remove"
+        confirmVariant="destructive"
+        confirmLoading={actionBusy}
+        onConfirm={confirmRemoveMember}
+      />
+
+      <Dialog
+        open={Boolean(revokeTarget)}
+        onOpenChange={(o) => (o ? null : setRevokeTarget(null))}
+        title="Revoke invite"
+        description={
+          revokeTarget
+            ? `Revoke pending invite for ${revokeTarget.email}?`
+            : ""
+        }
+        confirmLabel="Revoke"
+        confirmVariant="destructive"
+        confirmLoading={actionBusy}
+        onConfirm={confirmRevokeInvite}
+      />
+
+      <Dialog
+        open={showLeave}
+        onOpenChange={setShowLeave}
+        title="Leave team"
+        description={`Leave ${membership.team.name}?`}
+        confirmLabel="Leave"
+        confirmVariant="destructive"
+        confirmLoading={actionBusy}
+        onConfirm={handleLeave}
+      />
+
+      <Dialog
+        open={showDelete}
+        onOpenChange={setShowDelete}
+        title="Delete team"
+        description={`Delete ${membership.team.name} and all its data? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="destructive"
+        confirmLoading={actionBusy}
+        onConfirm={handleDelete}
+      />
     </ScrollView>
   );
 }

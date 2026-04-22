@@ -11,7 +11,6 @@ import { Text } from "@/components/ui/Text";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
 import { useTeams } from "@/providers/TeamsProvider";
 import { createSession, listSessions, type ListScope, type Session } from "@/services/agent";
-import { roleAtLeast } from "@/services/teams";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -28,14 +27,16 @@ function relativeTime(iso: string): string {
 export default function SessionsScreen() {
   const router = useRouter();
   const { user } = useAuthSession();
-  const { active } = useTeams();
+  const { active, can } = useTeams();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [scope, setScope] = useState<ListScope>("mine");
 
-  const canSeeAll = roleAtLeast(active?.role, "admin");
+  // Only admins+ can list "all" sessions in the active team. Funnels through
+  // the central can() table so the rule lives in one place.
+  const canSeeAll = can("agent.viewAllSessions");
   const effectiveScope: ListScope = canSeeAll ? scope : "mine";
 
   const load = useCallback(async () => {

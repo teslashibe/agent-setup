@@ -6,9 +6,32 @@ import {
   acceptInvite as acceptInviteAPI,
   type Membership,
   listMyTeams,
+  roleAtLeast,
+  type TeamRole,
 } from "@/services/teams";
 import { setActiveTeamProvider } from "@/services/api";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
+
+// Action is the closed set of UI gates the mobile client knows how to ask
+// about. Mirrors the server's permission gates in teams.Service.canActOn /
+// invites.Service.* — keeping them named (not raw role checks) means the
+// rule lives in one place and the views just declare intent.
+//
+// Pre-checks like this are advisory only — the server is still the source
+// of truth. A stale role here can't grant anything; the server will 403.
+export type TeamAction =
+  | "team.update"               // PATCH /api/teams/:teamID            (admin+)
+  | "team.delete"               // DELETE /api/teams/:teamID           (owner)
+  | "team.transferOwnership"    // POST   /transfer-ownership          (owner)
+  | "members.list"              // any member can see the roster
+  | "members.changeRole"        // PATCH  /members/:userID             (admin+)
+  | "members.remove"            // DELETE /members/:userID             (admin+)
+  | "members.leave"             // DELETE /members/me                  (any non-owner non-personal)
+  | "invites.list"              // any member can see pending invites
+  | "invites.create"            // POST   /invites                     (admin+)
+  | "invites.resend"            // POST   /invites/:id/resend          (admin+)
+  | "invites.revoke"            // DELETE /invites/:id                 (admin+)
+  | "agent.viewAllSessions";    // GET    /api/sessions?scope=all      (admin+)
 
 type TeamsContextValue = {
   isLoading: boolean;
@@ -17,6 +40,14 @@ type TeamsContextValue = {
   setActive: (teamID: string) => void;
   refresh: () => Promise<void>;
   acceptInvite: (token: string) => Promise<Membership | null>;
+  /**
+   * can checks whether the current viewer (in the active team) is allowed
+   * to perform an action. Returns false when no active team is selected.
+   * For team-scoped actions on a *different* team than active, pass the
+   * membership explicitly via canIn().
+   */
+  can: (action: TeamAction) => boolean;
+  canIn: (membership: Membership | null | undefined, action: TeamAction) => boolean;
 };
 
 const ACTIVE_TEAM_KEY = `${process.env.EXPO_PUBLIC_APP_SLUG ?? "app"}_active_team`;
@@ -44,6 +75,40 @@ async function writeStoredActive(teamID: string | null) {
     return;
   }
   await SecureStore.deleteItemAsync(ACTIVE_TEAM_KEY);
+}
+
+// resolveCan is the single source of truth for client-side permission gates.
+// Each branch maps an action to the same role tier the server enforces, with
+// extra membership-shape checks (personal team / owner-only / etc).
+function resolveCan(m: Membership, action: TeamAction): boolean {
+  const role: TeamRole = m.role;
+  switch (action) {
+    case "members.list":
+    case "invites.list":
+      // Every member can read the roster + pending invites.
+      return true;
+
+    case "team.update":
+    case "members.changeRole":
+    case "members.remove":
+    case "invites.create":
+    case "invites.resend":
+    case "invites.revoke":
+    case "agent.viewAllSessions":
+      return roleAtLeast(role, "admin");
+
+    case "team.delete":
+    case "team.transferOwnership":
+      // Only owner; further blocked server-side for personal teams.
+      return role === "owner" && !m.team.is_personal;
+
+    case "members.leave":
+      // Owners can't leave (must transfer first); personal team can't be left.
+      return role !== "owner" && !m.team.is_personal;
+
+    default:
+      return false;
+  }
 }
 
 // pickPreferredActive favours (in order): the previously stored active team if
@@ -144,9 +209,31 @@ export function TeamsProvider({ children }: { children: React.ReactNode }) {
     return joined;
   }, []);
 
+  const canIn = useCallback(
+    (membership: Membership | null | undefined, action: TeamAction): boolean => {
+      if (!membership) return false;
+      return resolveCan(membership, action);
+    },
+    [],
+  );
+
+  const can = useCallback(
+    (action: TeamAction): boolean => canIn(active, action),
+    [canIn, active],
+  );
+
   const value = useMemo<TeamsContextValue>(
-    () => ({ isLoading, memberships, active, setActive, refresh, acceptInvite }),
-    [isLoading, memberships, active, setActive, refresh, acceptInvite],
+    () => ({
+      isLoading,
+      memberships,
+      active,
+      setActive,
+      refresh,
+      acceptInvite,
+      can,
+      canIn,
+    }),
+    [isLoading, memberships, active, setActive, refresh, acceptInvite, can, canIn],
   );
 
   return <TeamsContext.Provider value={value}>{children}</TeamsContext.Provider>;
