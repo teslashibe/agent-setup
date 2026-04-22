@@ -30,6 +30,7 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/invites"
 	mcppkg "github.com/teslashibe/agent-setup/backend/internal/mcp"
 	"github.com/teslashibe/agent-setup/backend/internal/mcp/platforms"
+	"github.com/teslashibe/agent-setup/backend/internal/notifications"
 	"github.com/teslashibe/agent-setup/backend/internal/teams"
 )
 
@@ -156,7 +157,37 @@ func main() {
 		},
 	}))
 
-	if err := mountMCP(app, api, authMW, cfg, pool, magicSvc, agentSvc); err != nil {
+	// Notification capture: opt-in by env (defaults off). When enabled,
+	// mount the ingest + query routes under the existing auth middleware
+	// and prepare the per-user service for the MCP plugin below.
+	var notifSvc *notifications.Service
+	if cfg.NotificationsEnabled {
+		notifSvc = notifications.NewService(notifications.NewStore(pool), notifications.ServiceConfig{
+			DefaultPageSize: cfg.NotificationsDefaultPageSize,
+			MaxPageSize:     cfg.NotificationsMaxPageSize,
+			ReplyWindowHrs:  cfg.NotificationsReplyWindowHrs,
+		})
+		ingestLimiter := limiter.New(limiter.Config{
+			Max:        cfg.NotificationsIngestRateLimit,
+			Expiration: cfg.NotificationsIngestRateWindow,
+			KeyGenerator: func(c *fiber.Ctx) string {
+				if id, ok := c.Locals("user_id").(string); ok && id != "" {
+					return "notif-ingest:" + id
+				}
+				return "notif-ingest:" + c.IP()
+			},
+			LimitReached: func(c *fiber.Ctx) error {
+				return c.Status(fiber.StatusTooManyRequests).JSON(
+					fiber.Map{"error": "notification ingest rate limit exceeded — please slow down"})
+			},
+		})
+		notifications.NewHandler(notifSvc).Mount(api, ingestLimiter)
+		log.Printf("notifications: enabled (rate=%d/%s, default_page=%d, max_page=%d)",
+			cfg.NotificationsIngestRateLimit, cfg.NotificationsIngestRateWindow,
+			cfg.NotificationsDefaultPageSize, cfg.NotificationsMaxPageSize)
+	}
+
+	if err := mountMCP(app, api, authMW, cfg, pool, magicSvc, agentSvc, notifSvc); err != nil {
 		log.Fatalf("mcp: %v", err)
 	}
 
@@ -211,6 +242,11 @@ func newInviteEmailSender(cfg config.Config) invites.EmailSender {
 // CREDENTIALS_ENCRYPTION_KEY is configured. When the key is missing the
 // helper logs a warning and returns nil so local-dev workflows that don't
 // need MCP can still come up.
+//
+// notifSvc is non-nil only when cfg.NotificationsEnabled. When non-nil the
+// internal "notifications" platform is appended to the plugin list so the
+// per-user agent gains the 5 notifications_* tools and a system prompt
+// addendum that teaches it how to use them for daily rollups.
 func mountMCP(
 	app *fiber.App,
 	api fiber.Router,
@@ -219,6 +255,7 @@ func mountMCP(
 	pool *pgxpool.Pool,
 	magicSvc *magiclink.Service,
 	agentSvc *agent.Service,
+	notifSvc *notifications.Service,
 ) error {
 	if cfg.CredentialsEncryptionKey == "" {
 		log.Printf("mcp: CREDENTIALS_ENCRYPTION_KEY not set — MCP routes and per-user provisioner disabled")
@@ -230,6 +267,9 @@ func mountMCP(
 	}
 
 	plugins := platforms.All()
+	if cfg.NotificationsEnabled && notifSvc != nil {
+		plugins = append(plugins, platforms.Notifications(notifSvc))
+	}
 	validators := make([]credentials.Validator, 0, len(plugins))
 	bindings := make([]mcppkg.PlatformBinding, 0, len(plugins))
 	for _, pl := range plugins {
@@ -263,7 +303,11 @@ func mountMCP(
 	if err != nil {
 		return fmt.Errorf("mcp endpoint factory: %w", err)
 	}
-	provisioner, err := agent.NewProvisioner(cfg, agentSvc.Client(), pool, endpointFn, agent.ProvisionerOptions{})
+	provOpts := agent.ProvisionerOptions{}
+	if cfg.NotificationsEnabled {
+		provOpts.SystemPrompt = agent.NotificationsSystemPrompt()
+	}
+	provisioner, err := agent.NewProvisioner(cfg, agentSvc.Client(), pool, endpointFn, provOpts)
 	if err != nil {
 		return fmt.Errorf("agent provisioner: %w", err)
 	}

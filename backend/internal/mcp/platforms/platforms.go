@@ -50,6 +50,8 @@ import (
 
 	"github.com/teslashibe/agent-setup/backend/internal/credentials"
 	"github.com/teslashibe/agent-setup/backend/internal/mcp"
+	"github.com/teslashibe/agent-setup/backend/internal/notifications"
+	notificationsmcp "github.com/teslashibe/agent-setup/backend/internal/notifications/mcp"
 )
 
 // Plugin pairs a single platform's MCP binding with its credential validator.
@@ -512,6 +514,36 @@ func Codegen() Plugin {
 					Model: cred.Extra["model"],
 				}
 				return codegen.NewAgent(cfg)
+			},
+		},
+		Validator: nullValidator{platform: platform},
+	}
+}
+
+// Notifications binds the internal notifications platform: a per-user view
+// of device-captured notifications used by the daily-rollup tools.
+//
+// Unlike every other plugin in this file, Notifications is *not* in
+// All() — agent-setup's main.go appends it conditionally on
+// cfg.NotificationsEnabled so forks that don't ship the Android capture
+// feature pay zero overhead. The binding sets NoCredentials=true because
+// data is pushed by the user's own authenticated device, not pulled from
+// an external service that needs cookies/tokens.
+//
+// The per-request user ID lives on ctx via mcp.UserIDFromContext (set by
+// the MCP server before calling NewClient).
+func Notifications(svc *notifications.Service) Plugin {
+	const platform = "notifications"
+	return Plugin{
+		Binding: mcp.PlatformBinding{
+			Provider:      notificationsmcp.Provider{},
+			NoCredentials: true,
+			NewClient: func(ctx context.Context, _ json.RawMessage) (any, error) {
+				userID := mcp.UserIDFromContext(ctx)
+				if userID == "" {
+					return nil, errors.New("notifications: missing authenticated user id on MCP request context")
+				}
+				return &notificationsmcp.Client{Svc: svc, UserID: userID}, nil
 			},
 		},
 		Validator: nullValidator{platform: platform},

@@ -10,6 +10,7 @@ import { Inter_500Medium, Inter_700Bold } from "@expo-google-fonts/inter";
 import { SpaceGrotesk_700Bold } from "@expo-google-fonts/space-grotesk";
 
 import { AuthSessionProvider } from "@/providers/AuthSessionProvider";
+import { NotificationCaptureProvider } from "@/providers/NotificationCaptureProvider";
 import { TeamsProvider } from "@/providers/TeamsProvider";
 
 export default function RootLayout() {
@@ -32,8 +33,10 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthSessionProvider>
         <TeamsProvider>
-          <StatusBar style="light" />
-          <Stack screenOptions={{ headerShown: false }} />
+          <NotificationCaptureProvider>
+            <StatusBar style="light" />
+            <Stack screenOptions={{ headerShown: false }} />
+          </NotificationCaptureProvider>
         </TeamsProvider>
       </AuthSessionProvider>
     </GestureHandlerRootView>

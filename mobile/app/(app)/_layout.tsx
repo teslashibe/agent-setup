@@ -49,6 +49,10 @@ export default function AppLayout() {
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
       <Tabs.Screen name="chat" options={{ href: null }} />
       <Tabs.Screen name="platforms" options={{ href: null }} />
+      {/* Capture screen is reached via Settings → Notification Capture; we
+          register it as a hidden tab so deep links work and expo-router
+          knows about the route. */}
+      <Tabs.Screen name="capture" options={{ href: null }} />
     </Tabs>
   );
 }

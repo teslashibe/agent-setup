@@ -42,10 +42,16 @@ import (
 //   - ValidateCredential is optional; when present, the credential service
 //     calls it before persisting the credential so users get fast feedback
 //     on bad cookie blobs.
+//   - NoCredentials, when true, instructs Server.CallTool to skip the
+//     credential lookup entirely and pass nil to NewClient. Use this for
+//     bindings whose state lives on the server itself (e.g. the internal
+//     notifications platform whose data is pushed directly by the device).
+//     The authenticated user ID is still available via mcp.UserIDFromContext.
 type PlatformBinding struct {
 	Provider           mcptool.Provider
 	NewClient          func(ctx context.Context, credential json.RawMessage) (any, error)
 	ValidateCredential func(credential json.RawMessage) error
+	NoCredentials      bool
 }
 
 // Platform returns the platform identifier for this binding (delegates to

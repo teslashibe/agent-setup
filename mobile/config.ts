@@ -16,3 +16,13 @@ export const API_URL =
 // Spec: .cursor/tickets/teams-scope.md §"Configuration":
 //   `TEAMS_ENABLED = process.env.EXPO_PUBLIC_TEAMS_ENABLED !== "false"`
 export const TEAMS_ENABLED = process.env.EXPO_PUBLIC_TEAMS_ENABLED !== "false";
+
+// NOTIFICATIONS_CAPTURE_ENABLED mirrors the server-side NOTIFICATIONS_ENABLED
+// flag. Default OFF — the feature is opt-in per the notification-capture
+// scope so forks of the template that don't ship the Android capture
+// pipeline pay zero UI overhead.
+//
+// When false, the capture settings screen, provider, and any tab entries
+// remain inert. Set EXPO_PUBLIC_NOTIFICATIONS_ENABLED="true" to opt in.
+export const NOTIFICATIONS_CAPTURE_ENABLED =
+  process.env.EXPO_PUBLIC_NOTIFICATIONS_ENABLED === "true";
