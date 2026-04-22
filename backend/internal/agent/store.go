@@ -11,7 +11,7 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
 )
 
-const sessionFields = `id::text, user_id::text, title, anthropic_session_id, created_at, updated_at`
+const sessionFields = `id::text, team_id::text, user_id::text, title, anthropic_session_id, created_at, updated_at`
 
 type Store struct{ pool *pgxpool.Pool }
 
@@ -23,23 +23,26 @@ type scanner interface {
 
 func scanSession(row scanner) (Session, error) {
 	var s Session
-	err := row.Scan(&s.ID, &s.UserID, &s.Title, &s.AnthropicSessionID, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.ID, &s.TeamID, &s.UserID, &s.Title, &s.AnthropicSessionID, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
-func (s *Store) CreateSession(ctx context.Context, userID, title, anthropicSessionID string) (Session, error) {
+func (s *Store) CreateSession(ctx context.Context, teamID, userID, title, anthropicSessionID string) (Session, error) {
 	return scanSession(s.pool.QueryRow(ctx, `
-		INSERT INTO agent_sessions (user_id, title, anthropic_session_id)
-		VALUES ($1, $2, $3)
+		INSERT INTO agent_sessions (team_id, user_id, title, anthropic_session_id)
+		VALUES ($1, $2, $3, $4)
 		RETURNING `+sessionFields,
-		userID, strings.TrimSpace(title), anthropicSessionID,
+		teamID, userID, strings.TrimSpace(title), anthropicSessionID,
 	))
 }
 
-func (s *Store) GetSession(ctx context.Context, userID, sessionID string) (Session, error) {
+// GetSessionInTeam fetches a session by id, but only if it belongs to teamID.
+// Cross-team access returns ErrNotFound (rather than ErrForbidden) so we don't
+// leak the existence of sessions in other teams.
+func (s *Store) GetSessionInTeam(ctx context.Context, teamID, sessionID string) (Session, error) {
 	sess, err := scanSession(s.pool.QueryRow(ctx,
-		`SELECT `+sessionFields+` FROM agent_sessions WHERE id = $1 AND user_id = $2`,
-		sessionID, userID,
+		`SELECT `+sessionFields+` FROM agent_sessions WHERE id = $1 AND team_id = $2`,
+		sessionID, teamID,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, apperrors.ErrNotFound
@@ -47,11 +50,26 @@ func (s *Store) GetSession(ctx context.Context, userID, sessionID string) (Sessi
 	return sess, err
 }
 
-func (s *Store) ListSessions(ctx context.Context, userID string) ([]Session, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+sessionFields+` FROM agent_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 100`,
-		userID,
+// ListSessionsInTeam returns sessions in teamID. When userIDFilter is non-empty,
+// it scopes to a single user; otherwise it returns every session in the team.
+func (s *Store) ListSessionsInTeam(ctx context.Context, teamID, userIDFilter string) ([]Session, error) {
+	var (
+		rows pgx.Rows
+		err  error
 	)
+	if strings.TrimSpace(userIDFilter) == "" {
+		rows, err = s.pool.Query(ctx,
+			`SELECT `+sessionFields+` FROM agent_sessions
+			 WHERE team_id = $1 ORDER BY updated_at DESC LIMIT 100`,
+			teamID,
+		)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`SELECT `+sessionFields+` FROM agent_sessions
+			 WHERE team_id = $1 AND user_id = $2 ORDER BY updated_at DESC LIMIT 100`,
+			teamID, userIDFilter,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -76,10 +94,12 @@ func (s *Store) UpdateTitle(ctx context.Context, sessionID, title string) error 
 	return err
 }
 
-func (s *Store) DeleteSession(ctx context.Context, userID, sessionID string) error {
+// DeleteSessionInTeam deletes a session by id within a team. Returns ErrNotFound
+// if no row matches both id and team_id.
+func (s *Store) DeleteSessionInTeam(ctx context.Context, teamID, sessionID string) error {
 	cmd, err := s.pool.Exec(ctx,
-		`DELETE FROM agent_sessions WHERE id = $1 AND user_id = $2`,
-		sessionID, userID,
+		`DELETE FROM agent_sessions WHERE id = $1 AND team_id = $2`,
+		sessionID, teamID,
 	)
 	if err != nil {
 		return err

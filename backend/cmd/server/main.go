@@ -99,7 +99,10 @@ func main() {
 		invitesH.MountPublicRoutes(app, cfg.MobileAppScheme)
 	}
 
-	agent.NewHandler(agentSvc).Mount(api, limiter.New(limiter.Config{
+	// Agent routes are team-scoped. RequireTeam reads X-Team-ID (or falls
+	// back to the caller's personal team) and stamps team_id + team_role.
+	agentGroup := api.Group("", teamMW.RequireTeam())
+	agent.NewHandler(agentSvc).Mount(agentGroup, limiter.New(limiter.Config{
 		Max:        cfg.AgentRunRateLimit,
 		Expiration: cfg.AgentRunRateWindow,
 		KeyGenerator: func(c *fiber.Ctx) string {

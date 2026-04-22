@@ -4,6 +4,7 @@ import "time"
 
 type Session struct {
 	ID                 string    `json:"id"`
+	TeamID             string    `json:"team_id"`
 	UserID             string    `json:"user_id"`
 	Title              string    `json:"title"`
 	AnthropicSessionID string    `json:"anthropic_session_id,omitempty"`
