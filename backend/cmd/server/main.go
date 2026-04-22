@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -24,7 +26,10 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
 	"github.com/teslashibe/agent-setup/backend/internal/auth"
 	"github.com/teslashibe/agent-setup/backend/internal/config"
+	"github.com/teslashibe/agent-setup/backend/internal/credentials"
 	"github.com/teslashibe/agent-setup/backend/internal/invites"
+	mcppkg "github.com/teslashibe/agent-setup/backend/internal/mcp"
+	"github.com/teslashibe/agent-setup/backend/internal/mcp/platforms"
 	"github.com/teslashibe/agent-setup/backend/internal/teams"
 )
 
@@ -151,6 +156,10 @@ func main() {
 		},
 	}))
 
+	if err := mountMCP(app, api, authMW, cfg, pool, magicSvc, agentSvc); err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	errCh := make(chan error, 1)
@@ -195,6 +204,115 @@ func newInviteEmailSender(cfg config.Config) invites.EmailSender {
 		return nil
 	}
 	return resend.New(cfg.ResendAPIKey, cfg.AuthEmailFrom)
+}
+
+// mountMCP wires the MCP server (registry, transport, credentials handler)
+// and installs a per-user agent provisioner on agentSvc when
+// CREDENTIALS_ENCRYPTION_KEY is configured. When the key is missing the
+// helper logs a warning and returns nil so local-dev workflows that don't
+// need MCP can still come up.
+func mountMCP(
+	app *fiber.App,
+	api fiber.Router,
+	authMW *auth.Middleware,
+	cfg config.Config,
+	pool *pgxpool.Pool,
+	magicSvc *magiclink.Service,
+	agentSvc *agent.Service,
+) error {
+	if cfg.CredentialsEncryptionKey == "" {
+		log.Printf("mcp: CREDENTIALS_ENCRYPTION_KEY not set — MCP routes and per-user provisioner disabled")
+		return nil
+	}
+	cipher, err := credentials.NewCipher(cfg.CredentialsEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("credentials cipher: %w", err)
+	}
+
+	plugins := platforms.All()
+	validators := make([]credentials.Validator, 0, len(plugins))
+	bindings := make([]mcppkg.PlatformBinding, 0, len(plugins))
+	for _, pl := range plugins {
+		validators = append(validators, pl.Validator)
+		bindings = append(bindings, pl.Binding)
+	}
+
+	credSvc := credentials.NewService(credentials.NewStore(pool), cipher, validators...)
+	credentials.NewHandler(credSvc).Mount(api)
+
+	registry, err := mcppkg.NewRegistry(bindings...)
+	if err != nil {
+		return fmt.Errorf("mcp registry: %w", err)
+	}
+	mcpSrv := mcppkg.NewServer(registry, credSvc, mcppkg.ResponseShaper{
+		MaxItemsPerPage:  cfg.MCPMaxItemsPerPage,
+		MaxStringLen:     cfg.MCPMaxStringLen,
+		MaxResponseBytes: cfg.MCPMaxResponseBytes,
+	})
+	transport := mcppkg.NewTransport(mcpSrv)
+
+	transport.MountHealth(app.Group("/mcp"))
+
+	mcpUser := app.Group("/mcp/u/:token", authMW.RequirePathAuth("token"))
+	transport.Mount(mcpUser)
+
+	mcpAPI := api.Group("/mcp")
+	transport.Mount(mcpAPI)
+
+	endpointFn, err := newMCPEndpointFn(cfg, pool, magicSvc)
+	if err != nil {
+		return fmt.Errorf("mcp endpoint factory: %w", err)
+	}
+	provisioner, err := agent.NewProvisioner(cfg, agentSvc.Client(), pool, endpointFn, agent.ProvisionerOptions{})
+	if err != nil {
+		return fmt.Errorf("agent provisioner: %w", err)
+	}
+	agentSvc.UseProvisioner(provisioner)
+
+	log.Printf("mcp: %d tools across %d platforms registered", len(registry.Tools()), len(registry.Platforms()))
+	return nil
+}
+
+// newMCPEndpointFn returns the per-user MCP URL factory used by the
+// Provisioner. We mint a fresh, long-lived JWT per user (subject = the
+// user's identity_key) and embed it in the URL path; the MCP transport
+// validates the JWT via auth.RequirePathAuth.
+//
+// The URL format is `<MCPPublicURL>/mcp/u/<token>/v1`. MCPPublicURL falls
+// back to AppURL.
+func newMCPEndpointFn(cfg config.Config, pool *pgxpool.Pool, magicSvc *magiclink.Service) (agent.MCPEndpointFn, error) {
+	base := strings.TrimRight(firstNonBlank(cfg.MCPPublicURL, cfg.AppURL), "/")
+	if base == "" {
+		return nil, fmt.Errorf("MCP_PUBLIC_URL or APP_URL must be set so Anthropic agents can reach the MCP server")
+	}
+	if u, err := url.Parse(base); err != nil || u.Scheme == "" {
+		return nil, fmt.Errorf("invalid MCP base URL %q", base)
+	}
+	const userQuery = `SELECT identity_key, email, name FROM users WHERE id = $1`
+	return func(ctx context.Context, userID string) (string, error) {
+		var identity, email, name string
+		if err := pool.QueryRow(ctx, userQuery, userID).Scan(&identity, &email, &name); err != nil {
+			return "", fmt.Errorf("lookup user %s: %w", userID, err)
+		}
+		token, err := magicSvc.IssueToken(magiclink.Claims{
+			Subject:     identity,
+			Email:       email,
+			DisplayName: name,
+		})
+		if err != nil {
+			return "", fmt.Errorf("issue MCP token: %w", err)
+		}
+		return base + "/mcp/u/" + url.PathEscape(token) + "/v1", nil
+	}, nil
+}
+
+func firstNonBlank(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service, teamsSvc *teams.Service) fiber.Handler {

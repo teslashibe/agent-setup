@@ -99,6 +99,21 @@ export default function SettingsScreen() {
 
         <Card>
           <CardHeader>
+            <CardTitle>Platform Connections</CardTitle>
+          </CardHeader>
+          <CardContent className="gap-3">
+            <Text variant="small" className="text-muted">
+              Connect LinkedIn, X, Reddit, Instagram and 9 other platforms so the agent can act on your behalf.
+              Credentials are encrypted at rest.
+            </Text>
+            <Button onPress={() => router.push("/(app)/platforms")} size="sm">
+              Manage platform connections
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle>About</CardTitle>
           </CardHeader>
           <CardContent className="gap-2">

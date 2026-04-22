@@ -228,6 +228,40 @@ opt-in. Roles are `owner` > `admin` > `member`.
 | `POST` | `/api/invites/accept` | Accept invite (caller email must match) |
 | `GET` | `/invites/accept?token=…` | **Public** HTML landing → deep-links into mobile app |
 
+### Platform credentials (require `Authorization: Bearer <jwt>`)
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/platforms` | List every platform + connection status |
+| `GET` | `/api/platforms/:platform/credentials` | Connection metadata (no secret returned) |
+| `POST` / `PUT` | `/api/platforms/:platform/credentials` | Upsert encrypted credential |
+| `DELETE` | `/api/platforms/:platform/credentials` | Disconnect platform |
+
+### MCP server
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/mcp/v1/health` | Liveness (no auth) |
+| `POST` | `/api/mcp/v1` | JSON-RPC 2.0 (header JWT) — `initialize`, `tools/list`, `tools/call` |
+| `POST` | `/mcp/u/:token/v1` | Same surface, JWT in URL path (used by Anthropic Managed Agents) |
+
+---
+
+## MCP layer (Model Context Protocol)
+
+`agent-setup` ships an in-process MCP server that exposes **374 tools across 14 platforms** (LinkedIn, X, Reddit, Hacker News, Facebook, Instagram, TikTok, Threads, Product Hunt, Nextdoor, ElevenLabs, Codegen/Claude Code, X Viral Scoring, Reddit Viral Scoring). Each tool wraps a method on the matching scraper package.
+
+The Anthropic Managed Agent for each user is provisioned with `/mcp/u/<jwt>/v1` as its only MCP server, so any tool the agent calls runs through Fiber and operates on that user's encrypted credentials.
+
+Token-efficiency is enforced server-side: every response is shaped to ≤50 items per array, ≤800 chars per string, and ≤64 KB total.
+
+| Doc | What it covers |
+| --- | --- |
+| [`docs/mcp-architecture.md`](./docs/mcp-architecture.md) | Components, request lifecycle, drift-prevention, K8s notes |
+| [`docs/credentials-setup.md`](./docs/credentials-setup.md) | How operators provision the encryption key, how users paste cookies/tokens |
+| [`docs/mcp-inventory.md`](./docs/mcp-inventory.md) | Generated table of every registered tool (run `go run ./cmd/mcp-inventory` to refresh) |
+| [`.cursor/rules/mcp-tool-conventions.mdc`](./.cursor/rules/mcp-tool-conventions.mdc) | The rule any AI agent follows when adding/auditing MCP tools |
+
 ### SSE event shape
 
 ```jsonc

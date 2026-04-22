@@ -48,6 +48,7 @@ export default function AppLayout() {
       />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
       <Tabs.Screen name="chat" options={{ href: null }} />
+      <Tabs.Screen name="platforms" options={{ href: null }} />
     </Tabs>
   );
 }

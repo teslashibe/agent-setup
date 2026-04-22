@@ -1,0 +1,68 @@
+version: 2
+
+# Keep the MCP layer in lockstep with the 14 scraper packages and shared
+# `mcptool` contract. We pin a single open-PR limit per scraper so PRs
+# don't pile up; CI runs the registry composition test + inventory
+# generator on every bump and refuses to merge if drift is detected.
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/backend"
+    schedule:
+      interval: "daily"
+      time: "07:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "mcp"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      mcp-shared:
+        patterns:
+          - "github.com/teslashibe/mcptool"
+      mcp-scrapers:
+        patterns:
+          - "github.com/teslashibe/linkedin-go"
+          - "github.com/teslashibe/x-go"
+          - "github.com/teslashibe/x-viral-go"
+          - "github.com/teslashibe/reddit-go"
+          - "github.com/teslashibe/redditviral-go"
+          - "github.com/teslashibe/hn-go"
+          - "github.com/teslashibe/facebook-go"
+          - "github.com/teslashibe/instagram-go"
+          - "github.com/teslashibe/tiktok-go"
+          - "github.com/teslashibe/producthunt-go"
+          - "github.com/teslashibe/nextdoor-go"
+          - "github.com/teslashibe/elevenlabs-go"
+          - "github.com/teslashibe/codegen-go"
+          - "github.com/teslashibe/threads-go"
+
+  - package-ecosystem: "npm"
+    directory: "/mobile"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "mobile"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(ci)"
