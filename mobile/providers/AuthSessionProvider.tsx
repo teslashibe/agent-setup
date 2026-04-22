@@ -10,8 +10,8 @@ type AuthSessionContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
   user: User | null;
-  login: (email: string) => Promise<void>;
-  verifyCode: (email: string, code: string) => Promise<void>;
+  login: (email: string, inviteToken?: string) => Promise<void>;
+  verifyCode: (email: string, code: string, inviteToken?: string) => Promise<{ inviteError?: string }>;
   logout: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
 };
@@ -163,14 +163,19 @@ export function AuthSessionProvider({ children }: { children: React.ReactNode })
     return () => subscription.remove();
   }, [applyToken]);
 
-  const login = useCallback(async (email: string) => {
-    await sendMagicLink(email);
+  const login = useCallback(async (email: string, inviteToken?: string) => {
+    await sendMagicLink(email, inviteToken);
   }, []);
 
   const verifyLoginCode = useCallback(
-    async (email: string, code: string) => {
-      const response = await verifyCode(email, code);
+    async (email: string, code: string, inviteToken?: string) => {
+      // The backend silently auto-accepts the bundled invite (if any). When
+      // it fails (expired, mismatched email, etc.) it surfaces the reason in
+      // invite_error so the caller can warn the user — login itself still
+      // succeeded so we apply the token regardless.
+      const response = await verifyCode(email, code, inviteToken);
       await applyToken(response.token);
+      return { inviteError: response.invite_error };
     },
     [applyToken]
   );
