@@ -14,7 +14,7 @@ require (
 	github.com/teslashibe/hn-go v0.3.2
 	github.com/teslashibe/instagram-go v1.2.2
 	github.com/teslashibe/linkedin-go v1.2.3
-	github.com/teslashibe/magiclink-auth-go v0.2.0
+	github.com/teslashibe/magiclink-auth-go v0.2.1
 	github.com/teslashibe/mcptool v0.1.1
 	github.com/teslashibe/nextdoor-go v1.2.1
 	github.com/teslashibe/producthunt-go v0.3.3

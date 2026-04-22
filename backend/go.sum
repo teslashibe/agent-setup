@@ -83,8 +83,8 @@ github.com/teslashibe/instagram-go v1.2.2 h1:775QgEXMKrt1Ux39TxhdfzmLwQylRhKaSMB
 github.com/teslashibe/instagram-go v1.2.2/go.mod h1:POGZkEDAU7ErLUcxbKFAd7FYISRAAWuJHNNO3pSqbZE=
 github.com/teslashibe/linkedin-go v1.2.3 h1:uA41WwKhSgMZMT/MCUpl8QlLY2tsVSu633gtcwmaWgU=
 github.com/teslashibe/linkedin-go v1.2.3/go.mod h1:X2Z7WYYzBAZXCYlJucyHz2rthFDlxKcoMIDrUWW/Oeg=
-github.com/teslashibe/magiclink-auth-go v0.2.0 h1:qx9L7hWuv+w1abkaeByyg5sRinh/FYXFcikf8NzjGwI=
-github.com/teslashibe/magiclink-auth-go v0.2.0/go.mod h1:R4DYGfbuFd7R3BRHOyre+TRIRQdCHGeK4j1Be4Odxao=
+github.com/teslashibe/magiclink-auth-go v0.2.1 h1:kj1ULTZ0qP3lMnTF6hgApHYXnHK04JqysEkQ5M1rOiI=
+github.com/teslashibe/magiclink-auth-go v0.2.1/go.mod h1:R4DYGfbuFd7R3BRHOyre+TRIRQdCHGeK4j1Be4Odxao=
 github.com/teslashibe/mcptool v0.1.1 h1:4G59LLmxSrJD3KErlFlN6g/q48/I0r0/ecVoB/PQ7eM=
 github.com/teslashibe/mcptool v0.1.1/go.mod h1:pEC1/efy4fCDr9NqvX1es+bdud7Q7qe2Uz2BR7ppTgA=
 github.com/teslashibe/nextdoor-go v1.2.1 h1:l8Tryt3O27Z7IYGUFgPK4kX1zSI2zV2wujzeMT+Yq1s=
