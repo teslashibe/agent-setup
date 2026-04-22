@@ -33,10 +33,13 @@ func (m *Middleware) RequireAuth() fiber.Handler {
 		if err != nil {
 			return apperrors.ErrUnauthorized
 		}
-		if _, err := m.authSvc.GetUser(c.UserContext(), userID); err != nil {
+		user, err := m.authSvc.GetUser(c.UserContext(), userID)
+		if err != nil {
 			return err
 		}
 		apperrors.SetUserID(c, userID)
+		apperrors.SetUserEmail(c, user.Email)
+		apperrors.SetUserDisplayName(c, user.Name)
 		c.Locals("auth_claims", claims)
 		return c.Next()
 	}

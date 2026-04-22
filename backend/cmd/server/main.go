@@ -68,8 +68,14 @@ func main() {
 	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc, teamsSvc))
 
 	authMW := auth.NewMiddleware(magicSvc, authSvc)
+	teamMW := teams.NewMiddleware(teamsSvc)
 	api := app.Group("/api", authMW.RequireAuth())
 	api.Get("/me", auth.NewHandler(authSvc).GetMe)
+
+	if cfg.TeamsEnabled {
+		teams.NewHandler(teamsSvc, teamMW).Mount(api)
+	}
+
 	agent.NewHandler(agentSvc).Mount(api, limiter.New(limiter.Config{
 		Max:        cfg.AgentRunRateLimit,
 		Expiration: cfg.AgentRunRateWindow,

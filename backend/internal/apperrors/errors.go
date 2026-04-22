@@ -56,7 +56,13 @@ func FiberHandler(c *fiber.Ctx, err error) error {
 	return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
 }
 
-const userIDKey = "user_id"
+const (
+	userIDKey   = "user_id"
+	emailKey    = "user_email"
+	displayKey  = "user_display"
+	teamIDKey   = "team_id"
+	teamRoleKey = "team_role"
+)
 
 // SetUserID is called by the auth middleware after a successful JWT check.
 func SetUserID(c *fiber.Ctx, id string) { c.Locals(userIDKey, id) }
@@ -66,4 +72,32 @@ func SetUserID(c *fiber.Ctx, id string) { c.Locals(userIDKey, id) }
 func UserID(c *fiber.Ctx) string {
 	id, _ := c.Locals(userIDKey).(string)
 	return id
+}
+
+// SetUserEmail / UserEmail surface the JWT-claim email for downstream handlers.
+func SetUserEmail(c *fiber.Ctx, email string) { c.Locals(emailKey, email) }
+func UserEmail(c *fiber.Ctx) string {
+	v, _ := c.Locals(emailKey).(string)
+	return v
+}
+
+// SetUserDisplayName / UserDisplayName surface the JWT-claim display name.
+func SetUserDisplayName(c *fiber.Ctx, name string) { c.Locals(displayKey, name) }
+func UserDisplayName(c *fiber.Ctx) string {
+	v, _ := c.Locals(displayKey).(string)
+	return v
+}
+
+// SetTeamID stores the active team ID resolved by team middleware.
+func SetTeamID(c *fiber.Ctx, id string) { c.Locals(teamIDKey, id) }
+func TeamID(c *fiber.Ctx) string {
+	v, _ := c.Locals(teamIDKey).(string)
+	return v
+}
+
+// SetTeamRole / TeamRole store the caller's role in the active team.
+func SetTeamRole(c *fiber.Ctx, role string) { c.Locals(teamRoleKey, role) }
+func TeamRole(c *fiber.Ctx) string {
+	v, _ := c.Locals(teamRoleKey).(string)
+	return v
 }
