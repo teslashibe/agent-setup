@@ -215,19 +215,24 @@ func canActOn(actor, target Role) bool {
 	}
 }
 
-// EnforceSeatLimit returns ErrSeatLimitReached if pendingNew would push the
-// team over its max_seats setting. pendingNew accounts for both current
-// members and active invites.
-func (s *Service) EnforceSeatLimit(ctx context.Context, teamID string, pendingInvites int) error {
+// EnforceSeatLimit returns ErrSeatLimitReached if accepting newSeats more
+// members (where each new seat may be either a direct add or a pending invite)
+// would exceed max_seats. Already-pending invites are also counted as
+// reserved seats so a flurry of invites can't blow past the limit.
+func (s *Service) EnforceSeatLimit(ctx context.Context, teamID string, newSeats int) error {
 	t, err := s.store.GetTeam(ctx, teamID)
 	if err != nil {
 		return err
 	}
-	count, err := s.store.CountMembers(ctx, teamID)
+	members, err := s.store.CountMembers(ctx, teamID)
 	if err != nil {
 		return err
 	}
-	if count+pendingInvites >= t.MaxSeats {
+	pending, err := s.store.CountActiveInvites(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	if members+pending+newSeats > t.MaxSeats {
 		return apperrors.ErrSeatLimitReached
 	}
 	return nil

@@ -269,6 +269,21 @@ func (s *Store) CountMembers(ctx context.Context, teamID string) (int, error) {
 	return n, err
 }
 
+// CountActiveInvites returns the number of pending invites (not accepted, not
+// revoked, not yet expired) for the given team. Used to enforce seat caps.
+func (s *Store) CountActiveInvites(ctx context.Context, teamID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM team_invites
+		WHERE team_id = $1
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+		  AND expires_at > NOW()`,
+		teamID,
+	).Scan(&n)
+	return n, err
+}
+
 // TransferOwnership atomically demotes fromUserID to admin and promotes
 // toUserID to owner. Both users must already be members.
 func (s *Store) TransferOwnership(ctx context.Context, teamID, fromUserID, toUserID string) error {

@@ -341,10 +341,13 @@ func TestEnforceSeatLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.EnforceSeatLimit(ctx, team.ID, 0); err != nil {
-		t.Fatalf("expected first seats to fit, got %v", err)
+		t.Fatalf("expected current count to fit, got %v", err)
 	}
-	if err := svc.EnforceSeatLimit(ctx, team.ID, 2); !errors.Is(err, apperrors.ErrSeatLimitReached) {
-		t.Fatalf("want ErrSeatLimitReached, got %v", err)
+	if err := svc.EnforceSeatLimit(ctx, team.ID, 2); err != nil {
+		t.Fatalf("expected count(1)+pending(2) <= max(3) to fit, got %v", err)
+	}
+	if err := svc.EnforceSeatLimit(ctx, team.ID, 3); !errors.Is(err, apperrors.ErrSeatLimitReached) {
+		t.Fatalf("count(1)+pending(3) > max(3) should reject, got %v", err)
 	}
 }
 

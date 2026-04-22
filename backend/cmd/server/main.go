@@ -18,12 +18,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	magiclink "github.com/teslashibe/magiclink-auth-go"
-	"github.com/teslashibe/magiclink-auth-go/fiberadapter"
+	"github.com/teslashibe/magiclink-auth-go/resend"
 
 	"github.com/teslashibe/agent-setup/backend/internal/agent"
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
 	"github.com/teslashibe/agent-setup/backend/internal/auth"
 	"github.com/teslashibe/agent-setup/backend/internal/config"
+	"github.com/teslashibe/agent-setup/backend/internal/invites"
 	"github.com/teslashibe/agent-setup/backend/internal/teams"
 )
 
@@ -44,7 +45,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("magiclink: %v", err)
 	}
-	_ = codeStore // Used by invites handler in a later commit.
+
+	var invitesSvc *invites.Service
+	if cfg.TeamsEnabled {
+		invitesSvc = invites.NewService(invites.Config{
+			AppName:   "Claude Agent Go",
+			AppURL:    cfg.AppURL,
+			FromName:  cfg.TeamsInviteFromName,
+			InviteTTL: cfg.TeamsInviteTTL,
+		}, teamsSvc, authSvc, newInviteEmailSender(cfg))
+	}
+
 	agentSvc, err := agent.NewService(cfg, agent.NewStore(pool))
 	if err != nil {
 		log.Fatalf("agent: %v", err)
@@ -62,9 +73,9 @@ func main() {
 	}))
 
 	app.Get("/health", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
-	app.Post("/auth/magic-link", fiberadapter.SendHandler(magicSvc))
-	app.Post("/auth/verify", fiberadapter.VerifyCodeHandler(magicSvc))
-	app.Get("/auth/verify", fiberadapter.VerifyLinkHandler(magicSvc))
+	app.Post("/auth/magic-link", sendMagicLinkHandler(magicSvc, codeStore, invitesSvc))
+	app.Post("/auth/verify", verifyCodeHandler(magicSvc, codeStore, invitesSvc))
+	app.Get("/auth/verify", verifyLinkHandler(magicSvc, codeStore, invitesSvc))
 	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc, teamsSvc))
 
 	authMW := auth.NewMiddleware(magicSvc, authSvc)
@@ -74,6 +85,18 @@ func main() {
 
 	if cfg.TeamsEnabled {
 		teams.NewHandler(teamsSvc, teamMW).Mount(api)
+
+		invitesH := invites.NewHandler(invitesSvc, teamMW)
+		invitesH.MountUserRoutes(api)
+
+		// Per-team invite routes share /api/teams/:teamID's RequireTeamFromParam
+		// so admins can list / create / revoke invites for the team they own.
+		teamScoped := api.Group("/teams/:teamID", teamMW.RequireTeamFromParam("teamID"))
+		invitesH.MountTeamRoutes(teamScoped)
+
+		// Public landing page; no auth required so email recipients can land
+		// here and be deep-linked into the mobile app.
+		invitesH.MountPublicRoutes(app, cfg.MobileAppScheme)
 	}
 
 	agent.NewHandler(agentSvc).Mount(api, limiter.New(limiter.Config{
@@ -128,6 +151,13 @@ func newPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 	return pool, nil
+}
+
+func newInviteEmailSender(cfg config.Config) invites.EmailSender {
+	if strings.TrimSpace(cfg.ResendAPIKey) == "" {
+		return nil
+	}
+	return resend.New(cfg.ResendAPIKey, cfg.AuthEmailFrom)
 }
 
 func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service, teamsSvc *teams.Service) fiber.Handler {
