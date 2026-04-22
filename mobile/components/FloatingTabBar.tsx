@@ -1,19 +1,32 @@
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { MessagesSquare, Settings } from "lucide-react-native";
+import { Check, ChevronsUpDown, MessagesSquare, Settings, Users } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import { Platform, Pressable, View } from "react-native";
+import { useState } from "react";
+import { Modal, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Badge } from "@/components/ui/Badge";
+import { Card, CardContent } from "@/components/ui/Card";
 import { Text } from "@/components/ui/Text";
+import { useTeams } from "@/providers/TeamsProvider";
+import type { Membership } from "@/services/teams";
 
 const iconMap: Record<string, typeof MessagesSquare> = {
   index: MessagesSquare,
+  teams: Users,
   settings: Settings
 };
 
 const labelMap: Record<string, string> = {
   index: "Chats",
+  teams: "Teams",
   settings: "Settings"
+};
+
+const roleVariant: Record<Membership["role"], "default" | "secondary" | "outline"> = {
+  owner: "default",
+  admin: "secondary",
+  member: "outline"
 };
 
 /**
@@ -106,10 +119,14 @@ function WebSidebar({ state, descriptors, navigation }: BottomTabBarProps) {
       // the native typecheck happy while react-native-web forwards it.
       style={{ position: "fixed" as unknown as "absolute", top: 0, left: 0, bottom: 0, width: 240 }}
     >
-      <View className="mb-6 px-2">
+      <View className="mb-4 px-2">
         <Text variant="large" className="font-semibold">
           Claude Agent Go
         </Text>
+      </View>
+
+      <View className="mb-4 px-2">
+        <TeamSwitcher />
       </View>
 
       <View className="gap-1">
@@ -158,5 +175,90 @@ function WebSidebar({ state, descriptors, navigation }: BottomTabBarProps) {
         })}
       </View>
     </View>
+  );
+}
+
+// ---------- TeamSwitcher ---------------------------------------------------
+
+// TeamSwitcher renders a compact pill that opens a modal listing every team
+// the caller is a member of. Tapping a row sets that team as active across
+// the app via the TeamsProvider; subsequent agent / chat / invites requests
+// will pick up the new X-Team-ID automatically.
+export function TeamSwitcher() {
+  const { active, memberships, setActive, isLoading } = useTeams();
+  const [open, setOpen] = useState(false);
+
+  if (isLoading && !active) {
+    return (
+      <View className="rounded-lg border border-border bg-card px-3 py-2">
+        <Text variant="small" className="text-muted">Loading teams…</Text>
+      </View>
+    );
+  }
+  if (!active) {
+    return (
+      <View className="rounded-lg border border-border bg-card px-3 py-2">
+        <Text variant="small" className="text-muted">No team</Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        className="flex-row items-center justify-between rounded-lg border border-border bg-card px-3 py-2"
+      >
+        <View className="flex-1 pr-2">
+          <Text variant="small" className="text-muted">Active team</Text>
+          <Text variant="small" numberOfLines={1} className="font-medium">
+            {active.team.name}
+          </Text>
+        </View>
+        <ChevronsUpDown size={14} color="#9AA4B2" />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable
+          className="flex-1 items-center justify-center bg-black/60 px-5"
+          onPress={() => setOpen(false)}
+        >
+          <Pressable onPress={() => undefined} className="w-full max-w-md">
+            <Card>
+              <CardContent>
+                <Text variant="large" className="mb-3 font-semibold">Switch team</Text>
+                {memberships.map((m) => {
+                  const isActive = active.team.id === m.team.id;
+                  return (
+                    <Pressable
+                      key={m.team.id}
+                      onPress={() => {
+                        setActive(m.team.id);
+                        setOpen(false);
+                      }}
+                      className={
+                        "flex-row items-center justify-between rounded-lg px-3 py-2 " +
+                        (isActive ? "bg-primary/10" : "active:bg-card-foreground/5")
+                      }
+                    >
+                      <View className="flex-1 pr-3">
+                        <Text variant="small" numberOfLines={1} className="font-medium">
+                          {m.team.name}
+                        </Text>
+                        <Text variant="small" className="text-muted">{m.team.slug}</Text>
+                      </View>
+                      <View className="flex-row items-center gap-2">
+                        <Badge variant={roleVariant[m.role]}>{m.role}</Badge>
+                        {isActive ? <Check size={14} color="#00D4AA" /> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }

@@ -39,6 +39,7 @@ export default function AppLayout() {
   return (
     <Tabs tabBar={(props) => <FloatingTabBar {...props} />} screenOptions={screenOptions}>
       <Tabs.Screen name="index" options={{ title: "Chats" }} />
+      <Tabs.Screen name="teams" options={{ title: "Teams" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
       <Tabs.Screen name="chat" options={{ href: null }} />
     </Tabs>
