@@ -16,33 +16,57 @@ import {
   PlatformStatus,
   disconnectPlatform,
   listPlatforms,
+  parseExtensionInput,
   setPlatformCredential
 } from "@/services/platforms";
 
 type ConnectFormProps = {
   meta: PlatformMetadata;
-  onSubmit: (values: Record<string, string>, label: string) => Promise<void>;
+  onSubmit: (credential: Record<string, unknown>, label: string) => Promise<void>;
   busy: boolean;
 };
 
+type InputMode = "fields" | "paste";
+
 function ConnectForm({ meta, onSubmit, busy }: ConnectFormProps) {
+  const cookieFields = meta.fields.filter((f) => f.kind === "cookie");
+  const supportsPaste = cookieFields.length > 0;
+  const [mode, setMode] = useState<InputMode>(supportsPaste ? "paste" : "fields");
   const [values, setValues] = useState<Record<string, string>>({});
+  const [pasted, setPasted] = useState("");
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const reset = () => {
+    setValues({});
+    setPasted("");
+    setLabel("");
+    setError(null);
+  };
+
   const handleSubmit = async () => {
     setError(null);
-    const required = meta.fields.filter((f) => !f.label.toLowerCase().includes("optional"));
-    for (const f of required) {
-      if (!values[f.name]?.trim()) {
-        setError(`${f.label} is required`);
+    let credential: Record<string, unknown>;
+    if (mode === "paste") {
+      try {
+        credential = parseExtensionInput(meta, pasted);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not parse pasted input");
         return;
       }
+    } else {
+      const required = meta.fields.filter((f) => !f.label.toLowerCase().includes("optional"));
+      for (const f of required) {
+        if (!values[f.name]?.trim()) {
+          setError(`${f.label} is required`);
+          return;
+        }
+      }
+      credential = buildCredential(meta.fields, values);
     }
     try {
-      await onSubmit(values, label);
-      setValues({});
-      setLabel("");
+      await onSubmit(credential, label);
+      reset();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save credentials");
     }
@@ -64,20 +88,56 @@ function ConnectForm({ meta, onSubmit, busy }: ConnectFormProps) {
       <Button variant="ghost" size="sm" onPress={() => Linking.openURL(COOKIE_EDITOR_LINK)}>
         Get Cookie-Editor extension
       </Button>
-      {meta.fields.map((f) => (
+      {supportsPaste ? (
+        <View className="flex-row gap-2">
+          <Button
+            size="sm"
+            variant={mode === "paste" ? "default" : "outline"}
+            onPress={() => setMode("paste")}
+            disabled={busy}
+          >
+            Paste exported JSON / cookie string
+          </Button>
+          <Button
+            size="sm"
+            variant={mode === "fields" ? "default" : "outline"}
+            onPress={() => setMode("fields")}
+            disabled={busy}
+          >
+            Enter fields
+          </Button>
+        </View>
+      ) : null}
+      {mode === "paste" ? (
         <Input
-          key={f.name}
-          label={f.label}
-          value={values[f.name] ?? ""}
-          onChangeText={(text) => setValues((prev) => ({ ...prev, [f.name]: text }))}
+          label="Paste here"
+          value={pasted}
+          onChangeText={setPasted}
           autoCapitalize="none"
           autoCorrect={false}
-          secureTextEntry={f.kind === "token"}
-          placeholder={f.placeholder ?? "Paste value"}
-          multiline={f.kind === "cookie" && f.name === "cookies"}
+          multiline
+          numberOfLines={6}
+          placeholder={`[\n  { "name": "${cookieFields[0]?.name ?? "cookie"}", "value": "…" }\n]\nOR  ${
+            cookieFields.map((f) => `${f.name}=…`).join("; ") || "cookie_name=value"
+          }`}
           editable={!busy}
         />
-      ))}
+      ) : (
+        meta.fields.map((f) => (
+          <Input
+            key={f.name}
+            label={f.label}
+            value={values[f.name] ?? ""}
+            onChangeText={(text) => setValues((prev) => ({ ...prev, [f.name]: text }))}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={f.kind === "token"}
+            placeholder={f.placeholder ?? "Paste value"}
+            multiline={f.kind === "cookie" && f.name === "cookies"}
+            editable={!busy}
+          />
+        ))
+      )}
       <Input
         label="Label (optional)"
         value={label}
@@ -109,10 +169,9 @@ function PlatformRow({ meta, status, onChanged }: RowProps) {
   const [busy, setBusy] = useState(false);
   const isConnected = !!status?.connected;
 
-  const handleSubmit = async (values: Record<string, string>, label: string) => {
+  const handleSubmit = async (credential: Record<string, unknown>, label: string) => {
     setBusy(true);
     try {
-      const credential = buildCredential(meta.fields, values);
       await setPlatformCredential(meta.id, credential, label);
       await onChanged();
       setOpen(false);

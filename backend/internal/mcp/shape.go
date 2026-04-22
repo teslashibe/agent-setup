@@ -69,6 +69,11 @@ func (s ResponseShaper) shape(v any, maxStr, maxItems int) any {
 		return nil
 	case string:
 		return truncateRunes(x, maxStr)
+	case bool, float32, float64,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		json.Number:
+		return x
 	case []any:
 		if maxItems > 0 && len(x) > maxItems {
 			x = x[:maxItems]
@@ -78,14 +83,15 @@ func (s ResponseShaper) shape(v any, maxStr, maxItems int) any {
 		}
 		return x
 	case map[string]any:
+		// Detect "page" shape (mcptool.Page wraps results as `items: [...]`)
+		// BEFORE recursing into children, because recursion would already
+		// truncate the items slice and we'd lose the signal to set
+		// `truncated: true` on the parent.
+		if items, ok := x["items"].([]any); ok && maxItems > 0 && len(items) > maxItems {
+			x["truncated"] = true
+		}
 		for k, vv := range x {
 			x[k] = s.shape(vv, maxStr, maxItems)
-		}
-		if items, ok := x["items"].([]any); ok {
-			if maxItems > 0 && len(items) > maxItems {
-				x["items"] = items[:maxItems]
-				x["truncated"] = true
-			}
 		}
 		return x
 	default:
@@ -96,6 +102,12 @@ func (s ResponseShaper) shape(v any, maxStr, maxItems int) any {
 // shapeReflectFallback handles concrete Go structs by round-tripping through
 // JSON. This is correct for arbitrary Go values returned by tool handlers
 // without forcing them to construct map[string]any.
+//
+// We strip any non-generic value before re-shaping so we never recurse back
+// into shapeReflectFallback for a primitive whose type isn't in the type
+// switch above (e.g. a custom string alias). After json.Unmarshal the
+// resulting tree only contains map/slice/string/float64/bool/nil, all of
+// which the shape() switch handles directly.
 func (s ResponseShaper) shapeReflectFallback(v any, maxStr, maxItems int) any {
 	buf, err := json.Marshal(v)
 	if err != nil {

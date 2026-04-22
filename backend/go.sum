@@ -90,6 +90,10 @@ github.com/teslashibe/reddit-go v1.2.3 h1:DRpXhRbNblPl6kqTD8LuN+UO+I46eXcvp6mXHX
 github.com/teslashibe/reddit-go v1.2.3/go.mod h1:Mxq5g2H6mkZkLKtgimo5gsKpl0pTI600YvCzumUR+3I=
 github.com/teslashibe/redditviral-go v0.2.0 h1:Y2rdFU1RioPR0AgPolQjItGytyeT2AHs1a1/IBIBjvU=
 github.com/teslashibe/redditviral-go v0.2.0/go.mod h1:+W9P/ooqtFY34vRwjH7fZGBW0ehxuJA9GtvbcXGo1Aw=
+github.com/teslashibe/threads-go v1.1.2 h1:l5+NvPDfRsqEqBJ5mUURmFLe2uHbZvCbJ3QxkTKTCdw=
+github.com/teslashibe/threads-go v1.1.2/go.mod h1:JsSax+WV15LA1WiC784loAJfdQLjdQUFFh0YUjumOIQ=
+github.com/teslashibe/threads-go v1.2.0 h1:ZVdjt3n5BpJYiCMKjYyxkck/Q3Hhlp/gqhk8DuD6cKM=
+github.com/teslashibe/threads-go v1.2.0/go.mod h1:Et38f/uB6+Fl9mPCmtg2mCrTj9dQ1+S+W/2jS+N1fsE=
 github.com/teslashibe/tiktok-go v1.2.1 h1:5SZJkU62Xf4KT3HKj2HwiMu5zKHAB8iRJwT4HkFIA50=
 github.com/teslashibe/tiktok-go v1.2.1/go.mod h1:17oKLmOGqltwNSlG6/vwwmdikEF9Ytf4yScTnr+TGLY=
 github.com/teslashibe/x-go v1.6.1 h1:KMrPlqossFw3h72GYpT9UiwXeGCpLG0HjDMM1vc9Ymw=

@@ -42,6 +42,7 @@ require (
 	github.com/teslashibe/producthunt-go v0.3.3 // indirect
 	github.com/teslashibe/reddit-go v1.2.3 // indirect
 	github.com/teslashibe/redditviral-go v0.2.0 // indirect
+	github.com/teslashibe/threads-go v1.2.0 // indirect
 	github.com/teslashibe/tiktok-go v1.2.1 // indirect
 	github.com/teslashibe/x-go v1.6.1 // indirect
 	github.com/teslashibe/x-viral-go v0.2.0 // indirect

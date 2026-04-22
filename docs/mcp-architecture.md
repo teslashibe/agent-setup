@@ -42,7 +42,7 @@ registered.
                          │
         ┌────────────────┼────────────────────────────────────┐
         │ internal/mcp/platforms                              │
-        │   13 PlatformBindings → 331 tools                   │
+        │   14 PlatformBindings → 374 tools                   │
         │   linkedin-go, x-go, reddit-go, hn-go, facebook-go, │
         │   instagram-go, tiktok-go, producthunt-go,          │
         │   nextdoor-go, elevenlabs-go, codegen-go,           │
@@ -195,7 +195,7 @@ Run `go run ./cmd/mcp-inventory > docs/mcp-inventory.md` after any
 scraper bump. CI also regenerates and diffs to make sure the file is
 checked-in current.
 
-Today the registry exposes **13 platforms / 331 tools**. See
+Today the registry exposes **14 platforms / 374 tools**. See
 [`mcp-inventory.md`](./mcp-inventory.md) for the live table.
 
 ---

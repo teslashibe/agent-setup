@@ -249,7 +249,7 @@ opt-in. Roles are `owner` > `admin` > `member`.
 
 ## MCP layer (Model Context Protocol)
 
-`agent-setup` ships an in-process MCP server that exposes **331 tools across 13 platforms** (LinkedIn, X, Reddit, Hacker News, Facebook, Instagram, TikTok, Product Hunt, Nextdoor, ElevenLabs, Codegen/Claude Code, X Viral Scoring, Reddit Viral Scoring). Each tool wraps a method on the matching scraper package.
+`agent-setup` ships an in-process MCP server that exposes **374 tools across 14 platforms** (LinkedIn, X, Reddit, Hacker News, Facebook, Instagram, TikTok, Threads, Product Hunt, Nextdoor, ElevenLabs, Codegen/Claude Code, X Viral Scoring, Reddit Viral Scoring). Each tool wraps a method on the matching scraper package.
 
 The Anthropic Managed Agent for each user is provisioned with `/mcp/u/<jwt>/v1` as its only MCP server, so any tool the agent calls runs through Fiber and operates on that user's encrypted credentials.
 

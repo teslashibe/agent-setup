@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -115,13 +116,15 @@ func (s *Service) Delete(ctx context.Context, userID, platform string) error {
 	return s.store.Delete(ctx, userID, platform)
 }
 
-// Platforms returns the list of platforms with a registered Validator.
-// The MCP registry typically uses this to render the connection-status UI.
+// Platforms returns the list of platforms with a registered Validator,
+// sorted alphabetically so the settings UI sees a stable order across
+// restarts and across instances.
 func (s *Service) Platforms() []string {
 	out := make([]string, 0, len(s.validators))
 	for p := range s.validators {
 		out = append(out, p)
 	}
+	sort.Strings(out)
 	return out
 }
 

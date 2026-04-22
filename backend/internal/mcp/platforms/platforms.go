@@ -39,6 +39,8 @@ import (
 	redditmcp "github.com/teslashibe/reddit-go/mcp"
 	redditviral "github.com/teslashibe/redditviral-go"
 	redditviralmcp "github.com/teslashibe/redditviral-go/mcp"
+	threads "github.com/teslashibe/threads-go"
+	threadsmcp "github.com/teslashibe/threads-go/mcp"
 	tiktok "github.com/teslashibe/tiktok-go"
 	tiktokmcp "github.com/teslashibe/tiktok-go/mcp"
 	x "github.com/teslashibe/x-go"
@@ -71,6 +73,7 @@ func All() []Plugin {
 		Facebook(),
 		Instagram(),
 		TikTok(),
+		Threads(),
 		ProductHunt(),
 		Nextdoor(),
 		ElevenLabs(),
@@ -348,6 +351,66 @@ func TikTok() Plugin {
 			},
 		},
 		Validator: simpleValidator{platform: platform, requireCookies: []string{"sessionid", "tt_csrf_token"}},
+	}
+}
+
+// Threads binds threads-go. Threads supports two parallel auth schemes:
+//
+//   - Cookies (sessionid + csrftoken) — required for read endpoints
+//     (timeline, search, profile, hashtags, …).
+//   - Bearer token (IGT:2:…) + UserID — required for write endpoints
+//     (post, like, follow, …).
+//
+// Most users will paste both. We accept either subset and return the most
+// privileged client we can construct; tools that need write auth on a
+// read-only client will surface a clear error from threads-go itself.
+func Threads() Plugin {
+	const platform = "threads"
+	return Plugin{
+		Binding: mcp.PlatformBinding{
+			Provider: threadsmcp.Provider{},
+			NewClient: func(_ context.Context, raw json.RawMessage) (any, error) {
+				cred, err := parseCredential(raw)
+				if err != nil {
+					return nil, err
+				}
+				cookies := cred.cookieMap()
+				hasCookies := cookies != nil && cookies["sessionid"] != "" && cookies["csrftoken"] != ""
+				token := firstNonEmpty(cred.Token, cred.Extra["bearer"])
+				userID := cred.Extra["user_id"]
+				if userID == "" && cookies != nil {
+					userID = cookies["ds_user_id"]
+				}
+				hasBearer := token != "" && userID != ""
+				if !hasCookies && !hasBearer {
+					return nil, errors.New("threads credential needs cookies (sessionid+csrftoken) or token+user_id")
+				}
+				ck := threads.Cookies{}
+				if cookies != nil {
+					ck = threads.Cookies{
+						SessionID: cookies["sessionid"],
+						CSRFToken: cookies["csrftoken"],
+						DSUserID:  cookies["ds_user_id"],
+						Mid:       cookies["mid"],
+						IgDid:     cookies["ig_did"],
+					}
+				}
+				auth := threads.Auth{
+					Token:    token,
+					UserID:   userID,
+					DeviceID: cred.Extra["device_id"],
+				}
+				switch {
+				case hasCookies && hasBearer:
+					return threads.NewFull(ck, auth)
+				case hasBearer:
+					return threads.NewWithAuth(auth)
+				default:
+					return threads.New(ck)
+				}
+			},
+		},
+		Validator: simpleValidator{platform: platform, requireOneOf: []string{"cookies", "token", "extra"}},
 	}
 }
 

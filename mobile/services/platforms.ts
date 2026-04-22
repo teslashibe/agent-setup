@@ -166,6 +166,19 @@ export const PLATFORMS: PlatformMetadata[] = [
     ]
   },
   {
+    id: "threads",
+    name: "Threads",
+    helper:
+      "Read access: threads.com/instagram cookies (sessionid, csrftoken). Write access also needs a Bearer token (IGT:2:…) and your numeric user_id (paste those in Optional fields).",
+    fields: [
+      { name: "sessionid", label: "sessionid cookie", kind: "cookie" },
+      { name: "csrftoken", label: "csrftoken cookie", kind: "cookie" },
+      { name: "ds_user_id", label: "ds_user_id cookie", kind: "cookie" },
+      { name: "bearer", label: "Bearer token (optional, write)", kind: "extra" },
+      { name: "user_id", label: "Numeric user_id (optional, write)", kind: "extra" }
+    ]
+  },
+  {
     id: "producthunt",
     name: "Product Hunt",
     helper: "Easiest path: paste a Product Hunt v2 developer token (settings → API).",
@@ -222,4 +235,73 @@ export function buildCredential(
   if (Object.keys(extra).length > 0) out.extra = extra;
   if (token) out.token = token;
   return out;
+}
+
+/** Parses what the user pasted into the "extension JSON / cookie string"
+ * textarea and returns a normalised credential blob the backend will accept.
+ *
+ * Three accepted shapes (auto-detected):
+ *
+ * 1. Cookie-Editor JSON export — an array of objects each with at least
+ *    `name` and `value` fields. We keep only fields whose name is in
+ *    `meta.fields` (so we don't blow up the encrypted blob with site-wide
+ *    cookies the scraper doesn't need). When `meta.fields` is empty we
+ *    keep everything.
+ * 2. A raw HTTP `Cookie:` header — semicolon-separated `name=value` pairs.
+ *    We parse and filter the same way.
+ * 3. A bare JSON object — used as-is (advanced users can paste exactly
+ *    what the backend expects).
+ *
+ * Throws on un-parseable input so the caller can surface a clear error. */
+export function parseExtensionInput(meta: PlatformMetadata, raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("Paste the cookie JSON or string first");
+
+  const wantedNames = new Set(meta.fields.filter((f) => f.kind === "cookie").map((f) => f.name));
+  const keepCookie = (name: string): boolean => wantedNames.size === 0 || wantedNames.has(name);
+
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e) {
+      throw new Error(`Could not parse JSON: ${e instanceof Error ? e.message : "unknown"}`);
+    }
+    if (Array.isArray(parsed)) {
+      const cookies: Record<string, string> = {};
+      for (const item of parsed) {
+        if (!item || typeof item !== "object") continue;
+        const name = (item as Record<string, unknown>).name;
+        const value = (item as Record<string, unknown>).value;
+        if (typeof name === "string" && typeof value === "string" && keepCookie(name)) {
+          cookies[name] = value;
+        }
+      }
+      if (Object.keys(cookies).length === 0) {
+        throw new Error(
+          `Pasted JSON didn't contain any of: ${Array.from(wantedNames).join(", ") || "name/value entries"}`
+        );
+      }
+      return { cookies };
+    }
+    if (typeof parsed === "object" && parsed) {
+      return parsed as Record<string, unknown>;
+    }
+    throw new Error("Pasted JSON must be either an array (Cookie-Editor) or an object");
+  }
+
+  const cookies: Record<string, string> = {};
+  for (const part of trimmed.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const name = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (name && keepCookie(name)) cookies[name] = value;
+  }
+  if (Object.keys(cookies).length === 0) {
+    throw new Error(
+      `No cookies matched. Expected name=value pairs (e.g. ${Array.from(wantedNames).join(", ") || "li_at=…"})`
+    );
+  }
+  return { cookies };
 }

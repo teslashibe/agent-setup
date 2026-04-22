@@ -45,6 +45,7 @@ jobs:
             github.com/teslashibe/nextdoor-go
             github.com/teslashibe/elevenlabs-go
             github.com/teslashibe/codegen-go
+            github.com/teslashibe/threads-go
           )
           for m in "${mods[@]}"; do
             echo "::group::go get -u $m"
