@@ -159,14 +159,17 @@ agent-setup/
 │       ├── agent/         # Managed Agents service, store, handler, model
 │       ├── apperrors/     # Typed errors + Fiber ErrorHandler + UserID helper
 │       ├── auth/          # Magic-link auth: service, middleware, handler
+│       ├── teams/         # Team + membership + role middleware
+│       ├── invites/       # Invite service, email render, public landing
 │       ├── config/        # All env vars in one place
-│       └── db/migrations/ # 00001_init.sql (the only schema file)
+│       └── db/migrations/ # 00001_init.sql, 00002_teams.sql
 ├── mobile/                # Expo Router app — iOS, Android, Web
-│   ├── app/(auth)/        # Magic-link sign-in
-│   ├── app/(app)/         # Sessions list + streaming chat
+│   ├── app/(auth)/        # Magic-link sign-in (also handles invite flow)
+│   ├── app/(app)/         # Sessions list + streaming chat + Teams tab
+│   ├── app/invites/       # /invites/accept deep-link landing
 │   ├── components/ui/     # NativeWind primitives
-│   ├── providers/         # AuthSessionProvider
-│   └── services/          # api.ts, auth.ts, agent.ts (SSE consumer)
+│   ├── providers/         # AuthSessionProvider, TeamsProvider
+│   └── services/          # api.ts, auth.ts, agent.ts, teams.ts
 ├── .github/workflows/     # ci.yml + docker.yml (builds → ghcr.io)
 ├── docker-compose.yml
 └── Makefile
@@ -187,15 +190,43 @@ agent-setup/
 
 ### Agent (require `Authorization: Bearer <jwt>`)
 
+All `/api/agent/*` calls are scoped to the active team. Pass `X-Team-ID:
+<team-uuid>` to choose a team; if omitted, the caller's personal team is used.
+
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/me` | Current user |
-| `POST` | `/api/agent/sessions` | Create a session (provisions Anthropic session under the hood) |
-| `GET` | `/api/agent/sessions` | List your sessions |
-| `GET` | `/api/agent/sessions/:id` | Get one session |
-| `DELETE` | `/api/agent/sessions/:id` | Delete a session |
+| `POST` | `/api/agent/sessions` | Create a session in the active team |
+| `GET` | `/api/agent/sessions?scope=mine\|all` | List sessions; `scope=all` is admin+ only |
+| `GET` | `/api/agent/sessions/:id` | Get one session (admins+ can read any in team) |
+| `DELETE` | `/api/agent/sessions/:id` | Delete (owner of session OR admin+ in team) |
 | `GET` | `/api/agent/sessions/:id/messages` | Replay full chat history (from Anthropic) |
 | `POST` | `/api/agent/sessions/:id/run` | Send a message; **streams SSE** of agent events |
+
+### Teams (require `Authorization: Bearer <jwt>`, see [docs/TEAMS.md](./docs/TEAMS.md))
+
+Every user gets a `Personal` team auto-created on first login; other teams are
+opt-in. Roles are `owner` > `admin` > `member`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/teams` | List the caller's memberships |
+| `POST` | `/api/teams` | Create a team (caller becomes owner) |
+| `GET` | `/api/teams/:teamID` | Get team metadata + caller role |
+| `PATCH` | `/api/teams/:teamID` | Rename team (admin+) |
+| `DELETE` | `/api/teams/:teamID` | Delete a non-personal team (owner only) |
+| `GET` | `/api/teams/:teamID/members` | List members |
+| `PATCH` | `/api/teams/:teamID/members/:userID` | Change role (owner only) |
+| `DELETE` | `/api/teams/:teamID/members/:userID` | Remove member (admin+) |
+| `DELETE` | `/api/teams/:teamID/members/me` | Leave a team (not allowed for personal) |
+| `POST` | `/api/teams/:teamID/transfer-ownership` | Transfer to another member (owner only) |
+| `GET` | `/api/teams/:teamID/invites` | List pending invites (admin+) |
+| `POST` | `/api/teams/:teamID/invites` | Create invite + send email (admin+) |
+| `POST` | `/api/teams/:teamID/invites/:id/resend` | Resend the email (admin+) |
+| `DELETE` | `/api/teams/:teamID/invites/:id` | Revoke pending invite (admin+) |
+| `GET` | `/api/invites/preview?token=…` | **Unauthenticated** preview for landing page |
+| `POST` | `/api/invites/accept` | Accept invite (caller email must match) |
+| `GET` | `/invites/accept?token=…` | **Public** HTML landing → deep-links into mobile app |
 
 ### SSE event shape
 
@@ -229,6 +260,10 @@ All runtime config is environment variables. Defaults are in [`backend/internal/
 | `CORS_ALLOWED_ORIGINS` | yes (prod) | Comma-separated list of allowed origins |
 | `MOBILE_APP_SCHEME` | for deep links | URL scheme registered in `app.config.ts` |
 | `PORT` | no (default 8080) | API listen port |
+| `TEAMS_ENABLED` | no (default `true`) | Set `false` to disable `/api/teams` + invites |
+| `TEAMS_DEFAULT_MAX_SEATS` | no (default `25`) | Seat cap for newly-created teams |
+| `TEAMS_INVITE_TTL_HOURS` | no (default `168`) | Invite expiry; default = 7 days |
+| `TEAMS_INVITE_FROM_NAME` | no (default `Agent App`) | Display name on invite emails |
 
 ---
 
