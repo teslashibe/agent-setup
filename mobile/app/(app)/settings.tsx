@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/Separator";
 import { Text } from "@/components/ui/Text";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
 import { useTeams } from "@/providers/TeamsProvider";
+import { TEAMS_ENABLED } from "@/config";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -58,6 +59,7 @@ export default function SettingsScreen() {
           </CardContent>
         </Card>
 
+        {TEAMS_ENABLED ? (
         <Card>
           <CardHeader>
             <CardTitle>Teams</CardTitle>
@@ -93,6 +95,7 @@ export default function SettingsScreen() {
             </Button>
           </CardContent>
         </Card>
+        ) : null}
 
         <Card>
           <CardHeader>
