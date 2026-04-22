@@ -301,6 +301,35 @@ All runtime config is environment variables. Defaults are in [`backend/internal/
 
 ---
 
+## Local code-generation agent (optional)
+
+Managed Agents covers most use cases — Anthropic hosts the harness, you just
+ship prompts. For the cases where you instead need an agent that runs **on
+this machine** (filesystem access, on-prem deployments, off-platform tools, or
+swapping in Codex / Aider / OpenHands / Cline) the template ships an opt-in
+wrapper around [`teslashibe/codegen-go`](https://github.com/teslashibe/codegen-go).
+
+```bash
+npm install -g @anthropic-ai/claude-code   # or your CLI of choice
+claude login
+
+# add to backend/.env (see backend/.env.example for the full block):
+echo 'CODEGEN_AGENT=claude-code' >> backend/.env
+
+# kick the tires from the repo root:
+go run ./backend/cmd/codegen-demo "Summarise this directory in one paragraph."
+```
+
+The wiring lives in [`backend/internal/codegen`](./backend/internal/codegen/codegen.go) —
+~100 lines that read `CODEGEN_*` env vars and hand back a
+`codegen.Agent`. It is independent of the Managed Agents path; you can use one,
+the other, or both side-by-side. See the
+[`codegen-go` README](https://github.com/teslashibe/codegen-go#readme) for the
+full API and the supported CLI presets (Claude Code, Codex, Aider, OpenHands,
+Cline, custom).
+
+---
+
 ## Common tasks
 
 ```bash
