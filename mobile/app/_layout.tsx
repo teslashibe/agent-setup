@@ -10,6 +10,7 @@ import { Inter_500Medium, Inter_700Bold } from "@expo-google-fonts/inter";
 import { SpaceGrotesk_700Bold } from "@expo-google-fonts/space-grotesk";
 
 import { AuthSessionProvider } from "@/providers/AuthSessionProvider";
+import { TeamsProvider } from "@/providers/TeamsProvider";
 
 export default function RootLayout() {
   const { setColorScheme } = useColorScheme();
@@ -30,8 +31,10 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthSessionProvider>
-        <StatusBar style="light" />
-        <Stack screenOptions={{ headerShown: false }} />
+        <TeamsProvider>
+          <StatusBar style="light" />
+          <Stack screenOptions={{ headerShown: false }} />
+        </TeamsProvider>
       </AuthSessionProvider>
     </GestureHandlerRootView>
   );

@@ -1,18 +1,22 @@
 import { fetch as expoFetch } from "expo/fetch";
 
 import { API_URL } from "@/config";
-import { getAccessToken, request } from "@/services/api";
+import { getAccessToken, getActiveTeamID, request } from "@/services/api";
 
 export type Session = {
   id: string;
+  team_id: string;
   user_id: string;
   title: string;
+  anthropic_session_id?: string;
   system_prompt?: string | null;
   model?: string | null;
-  metadata: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
+
+export type ListScope = "mine" | "all";
 
 export type Message = {
   id: string;
@@ -33,8 +37,12 @@ export type AgentEvent =
   | { type: "done" }
   | { type: "error"; error: string };
 
-export async function listSessions() {
-  const res = await request<{ sessions: Session[] }>("/api/agent/sessions");
+// listSessions defaults to ?scope=mine; pass "all" only when the caller is at
+// least admin in the active team (the backend enforces this with a 403).
+export async function listSessions(scope: ListScope = "mine") {
+  const res = await request<{ sessions: Session[]; scope: ListScope }>(
+    `/api/agent/sessions?scope=${scope}`,
+  );
   return res.sessions ?? [];
 }
 
@@ -66,15 +74,21 @@ export async function* runSession(
     throw new Error("Not authenticated");
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+    Accept: "text/event-stream",
+  };
+  const team = getActiveTeamID();
+  if (team) {
+    headers["X-Team-ID"] = team;
+  }
+
   const response = await expoFetch(
     `${API_URL.replace(/\/+$/, "")}/api/agent/sessions/${sessionId}/run`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        Accept: "text/event-stream"
-      },
+      headers,
       body: JSON.stringify({ message }),
       signal
     }
