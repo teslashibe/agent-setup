@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!--
+    BIND_NOTIFICATION_LISTENER_SERVICE is a system permission. The user
+    grants it manually in Settings → Apps → Special access → Notification
+    access. Declaring it here is required so the OS knows the service
+    accepts the binding.
+  -->
+  <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
+
+  <application>
+    <service
+      android:name=".NotificationCaptureService"
+      android:label="Agent App Notification Capture"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

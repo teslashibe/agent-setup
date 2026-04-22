@@ -69,6 +69,32 @@ type Config struct {
 	// MCPMaxResponseBytes caps the total compact-JSON byte size of any
 	// tool response. Set to 0 to disable. Default 32 KiB.
 	MCPMaxResponseBytes int
+
+	// NotificationsEnabled gates the Android notification capture feature.
+	// When true, the backend mounts /api/notifications/* routes, registers
+	// the notifications_* MCP tools (5 of them) on the per-user agent, and
+	// extends the system prompt with rollup instructions. The mobile app's
+	// capture screen and provider also light up.
+	//
+	// Defaults to false so existing forks pick up the new migration without
+	// any runtime behaviour change. Set to true (and run the standard
+	// migrations) to enable.
+	NotificationsEnabled bool
+
+	// NotificationsIngestRateLimit caps POST /api/notifications/batch
+	// uploads per user per window. At the default 5-minute device flush
+	// cadence the configured 60/minute gives 12x headroom.
+	NotificationsIngestRateLimit  int
+	NotificationsIngestRateWindow time.Duration
+
+	// NotificationsDefaultPageSize is applied when MCP/REST callers omit a
+	// limit. NotificationsMaxPageSize is the hard cap.
+	NotificationsDefaultPageSize int
+	NotificationsMaxPageSize     int
+
+	// NotificationsReplyWindowHrs is the unanswered-message threshold used
+	// by the notifications_pending_actions classifier.
+	NotificationsReplyWindowHrs int
 }
 
 func Load() Config {
@@ -105,6 +131,13 @@ func Load() Config {
 		MCPMaxItemsPerPage:       getEnvInt("MCP_MAX_ITEMS_PER_PAGE", 50),
 		MCPMaxStringLen:          getEnvInt("MCP_MAX_STRING_LEN", 800),
 		MCPMaxResponseBytes:      getEnvInt("MCP_MAX_RESPONSE_BYTES", 32*1024),
+
+		NotificationsEnabled:          getEnvBool("NOTIFICATIONS_ENABLED", false),
+		NotificationsIngestRateLimit:  getEnvInt("NOTIFICATIONS_INGEST_RATE_LIMIT", 60),
+		NotificationsIngestRateWindow: time.Duration(getEnvInt("NOTIFICATIONS_INGEST_RATE_WINDOW_SECONDS", 60)) * time.Second,
+		NotificationsDefaultPageSize:  getEnvInt("NOTIFICATIONS_DEFAULT_PAGE_SIZE", 50),
+		NotificationsMaxPageSize:      getEnvInt("NOTIFICATIONS_MAX_PAGE_SIZE", 200),
+		NotificationsReplyWindowHrs:   getEnvInt("NOTIFICATIONS_ACTION_REPLY_WINDOW_HOURS", 2),
 	}
 }
 

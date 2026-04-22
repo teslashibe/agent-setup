@@ -91,6 +91,34 @@ When a tool requires platform credentials that the user has not yet connected, t
 
 Prefer fine-grained tool calls and small page sizes. Always summarise tool output before presenting it to the user.`
 
+// notificationsSystemPromptAddendum is appended to the default prompt when
+// cfg.NotificationsEnabled. Keeps the rollup behaviour latent in the
+// template so forks that turn the feature off don't waste tokens teaching
+// the agent about tools it can't see.
+const notificationsSystemPromptAddendum = `
+
+You also have access to the user's captured device notifications via tools prefixed with notifications_. These contain communication activity from the user's phone — texts, emails, WhatsApp messages, app notifications, missed calls, etc.
+
+When the user asks for a "rollup", "summary", "what happened today", or "what do I need to do", use these tools to build a structured response:
+
+1. Call notifications_apps to understand which channels had activity in the time range.
+2. Call notifications_threads to group activity by contact and conversation.
+3. Call notifications_pending_actions to surface items that may need follow-up.
+4. Call notifications_search to dig into specific contacts or topics the user mentions.
+
+Structure your rollup as:
+- "What happened" — organised by contact or conversation, most important first.
+- "What needs attention" — action items ranked by urgency, with the source message quoted.
+
+Keep summaries concise. Quote specific message content when it adds clarity (e.g. "Sarah asked: 'Can you send the comps for 742 Evergreen?'"). Flag time-sensitive items prominently. Default the time range to "today so far" when the user does not specify one.`
+
+// NotificationsSystemPrompt returns the default system prompt extended with
+// the notification rollup instructions. Used by main.go to opt-in the
+// addendum based on cfg.NotificationsEnabled.
+func NotificationsSystemPrompt() string {
+	return defaultSystemPrompt + notificationsSystemPromptAddendum
+}
+
 // EnsureForUser returns the cached UserAgent for userID, provisioning a new
 // pair if missing. Concurrent calls for the same user are serialised so we
 // only ever create one Agent per user.

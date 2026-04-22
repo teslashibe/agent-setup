@@ -9,13 +9,15 @@ import { Select, type SelectOption } from "@/components/ui/Select";
 import { Separator } from "@/components/ui/Separator";
 import { Text } from "@/components/ui/Text";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
+import { useNotificationCapture } from "@/providers/NotificationCaptureProvider";
 import { useTeams } from "@/providers/TeamsProvider";
-import { TEAMS_ENABLED } from "@/config";
+import { NOTIFICATIONS_CAPTURE_ENABLED, TEAMS_ENABLED } from "@/config";
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, logout } = useAuthSession();
   const { active, memberships, setActive } = useTeams();
+  const capture = useNotificationCapture();
 
   // Team-switcher options live next to the row so we can show role + a "·"
   // separator the same way the inline picker on the home screen would.
@@ -111,6 +113,24 @@ export default function SettingsScreen() {
             </Button>
           </CardContent>
         </Card>
+
+        {NOTIFICATIONS_CAPTURE_ENABLED && capture.isAvailable ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Notification Capture</CardTitle>
+            </CardHeader>
+            <CardContent className="gap-3">
+              <Text variant="small" className="text-muted">
+                {capture.isEnabled
+                  ? `Capturing notifications from ${capture.allowlist.length} app${capture.allowlist.length === 1 ? "" : "s"}. The agent uses these to produce your daily rollup.`
+                  : "Disabled. Enable to let the agent summarise your texts, WhatsApp, email and more."}
+              </Text>
+              <Button onPress={() => router.push("/(app)/capture")} size="sm">
+                Manage capture settings
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader>

@@ -92,6 +92,10 @@ func (s *Server) CallTool(ctx context.Context, userID, name string, input json.R
 // resolveClient looks up the per-request client for (user, platform), using
 // the per-request client cache to avoid creating multiple clients in the same
 // request.
+//
+// Bindings flagged with NoCredentials skip the credentials lookup and are
+// invoked with a nil credential blob; the authenticated user ID is always
+// available to the NewClient callback via mcp.UserIDFromContext(ctx).
 func (s *Server) resolveClient(ctx context.Context, userID string, binding PlatformBinding) (any, error) {
 	if binding.NewClient == nil {
 		return nil, &mcptool.Error{
@@ -103,20 +107,27 @@ func (s *Server) resolveClient(ctx context.Context, userID string, binding Platf
 	if c, ok := s.cache.get(ctx, key); ok {
 		return c, nil
 	}
-	credBlob, err := s.creds.Decrypted(ctx, userID, binding.Platform())
-	if err != nil {
-		if errors.Is(err, credentials.ErrNotFound) {
+	ctx = withUserID(ctx, userID)
+
+	var credBlob json.RawMessage
+	if !binding.NoCredentials {
+		blob, err := s.creds.Decrypted(ctx, userID, binding.Platform())
+		if err != nil {
+			if errors.Is(err, credentials.ErrNotFound) {
+				return nil, &mcptool.Error{
+					Code:    "credential_missing",
+					Message: fmt.Sprintf("no %s credential connected for this user — connect it in Settings", binding.Platform()),
+					Data:    map[string]any{"platform": binding.Platform()},
+				}
+			}
 			return nil, &mcptool.Error{
-				Code:    "credential_missing",
-				Message: fmt.Sprintf("no %s credential connected for this user — connect it in Settings", binding.Platform()),
-				Data:    map[string]any{"platform": binding.Platform()},
+				Code:    "credential_unreadable",
+				Message: fmt.Sprintf("could not decrypt %s credential: %v", binding.Platform(), err),
 			}
 		}
-		return nil, &mcptool.Error{
-			Code:    "credential_unreadable",
-			Message: fmt.Sprintf("could not decrypt %s credential: %v", binding.Platform(), err),
-		}
+		credBlob = blob
 	}
+
 	c, err := binding.NewClient(ctx, credBlob)
 	if err != nil {
 		return nil, &mcptool.Error{

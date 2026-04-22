@@ -1,0 +1,10 @@
+{
+  "name": "notification-capture",
+  "version": "0.1.0",
+  "description": "Local Expo module that exposes Android NotificationListenerService events to JS for the agent-setup template's optional notification capture feature.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "keywords": ["expo", "android", "notifications"],
+  "license": "UNLICENSED"
+}
