@@ -35,8 +35,8 @@ func NewService(cfg config.Config, store *Store) (*Service, error) {
 func (s *Service) Store() *Store { return s.store }
 
 // CreateSession provisions an Anthropic Managed Agent session and stores the
-// mapping in our database.
-func (s *Service) CreateSession(ctx context.Context, userID, title string) (Session, error) {
+// mapping in our database, scoped to the active team.
+func (s *Service) CreateSession(ctx context.Context, teamID, userID, title string) (Session, error) {
 	antSess, err := s.client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
 		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(s.cfg.AnthropicAgentID)},
 		EnvironmentID: s.cfg.AnthropicEnvID,
@@ -47,7 +47,7 @@ func (s *Service) CreateSession(ctx context.Context, userID, title string) (Sess
 	if strings.TrimSpace(title) == "" {
 		title = "New chat"
 	}
-	return s.store.CreateSession(ctx, userID, title, antSess.ID)
+	return s.store.CreateSession(ctx, teamID, userID, title, antSess.ID)
 }
 
 // Run streams agent events for a user message. The Anthropic event stream is

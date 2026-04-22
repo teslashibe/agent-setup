@@ -1,14 +1,30 @@
 import { Alert, Linking, ScrollView, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { RoleBadge } from "@/components/ui/RoleBadge";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import { Separator } from "@/components/ui/Separator";
 import { Text } from "@/components/ui/Text";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
+import { useTeams } from "@/providers/TeamsProvider";
+import { TEAMS_ENABLED } from "@/config";
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { user, logout } = useAuthSession();
+  const { active, memberships, setActive } = useTeams();
+
+  // Team-switcher options live next to the row so we can show role + a "·"
+  // separator the same way the inline picker on the home screen would.
+  // L2: this is the native settings tappable team-switcher row.
+  const switcherOptions: SelectOption<string>[] = memberships.map((m) => ({
+    value: m.team.id,
+    label: m.team.name,
+    description: `${m.team.is_personal ? "Personal" : "Team"} · ${m.role}`,
+  }));
 
   const handleLogout = async () => {
     try {
@@ -42,6 +58,44 @@ export default function SettingsScreen() {
             </Text>
           </CardContent>
         </Card>
+
+        {TEAMS_ENABLED ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Teams</CardTitle>
+          </CardHeader>
+          <CardContent className="gap-2">
+            {active ? (
+              <Select<string>
+                value={active.team.id}
+                onValueChange={(id) => setActive(id)}
+                options={switcherOptions}
+                renderTrigger={() => (
+                  <View className="flex-1 flex-row items-center justify-between gap-3">
+                    <View className="flex-1 pr-2">
+                      <Text variant="p" numberOfLines={1}>
+                        {active.team.name}
+                      </Text>
+                      <Text variant="small" className="text-muted" numberOfLines={1}>
+                        Active team · {memberships.length} membership
+                        {memberships.length === 1 ? "" : "s"}
+                      </Text>
+                    </View>
+                    <RoleBadge role={active.role} />
+                  </View>
+                )}
+              />
+            ) : (
+              <Text variant="small" className="text-muted">
+                No active team yet.
+              </Text>
+            )}
+            <Button variant="outline" size="sm" onPress={() => router.push("/(app)/teams")}>
+              Manage teams
+            </Button>
+          </CardContent>
+        </Card>
+        ) : null}
 
         <Card>
           <CardHeader>

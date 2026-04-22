@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -13,10 +13,20 @@ const RESEND_COOLDOWN_SECONDS = 30;
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ email?: string; invite_token?: string }>();
   const { login, verifyCode } = useAuthSession();
 
+  // When the user reaches this screen via the invite landing flow, both the
+  // recipient email and the invite_token are passed in. The email is locked
+  // to the recipient (so a logged-out user can't accept on someone else's
+  // behalf) and the token rides through magic-link → verify, which auto-
+  // accepts the invite once the JWT is issued.
+  const initialEmail = typeof params.email === "string" ? params.email : "";
+  const inviteToken = typeof params.invite_token === "string" ? params.invite_token : undefined;
+  const isInviteFlow = !!inviteToken;
+
   const [step, setStep] = useState<"email" | "code">("email");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -51,7 +61,7 @@ export default function WelcomeScreen() {
     if (cooldown > 0) return;
     setSubmitting(true);
     try {
-      await login(email.trim());
+      await login(email.trim(), inviteToken);
       setStep("code");
       startCooldown();
     } catch (error) {
@@ -69,7 +79,13 @@ export default function WelcomeScreen() {
     }
     setSubmitting(true);
     try {
-      await verifyCode(email.trim(), code.trim());
+      const { inviteError } = await verifyCode(email.trim(), code.trim(), inviteToken);
+      if (inviteError) {
+        // The login itself succeeded but the invite couldn't be applied —
+        // surface it so the user understands why they're not in the team
+        // they expected to land in.
+        Alert.alert("Invite could not be applied", inviteError);
+      }
       router.replace("/(app)");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid code";
@@ -86,11 +102,23 @@ export default function WelcomeScreen() {
     >
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>{step === "email" ? "Sign in with magic link" : "Enter verification code"}</CardTitle>
+          <CardTitle>
+            {isInviteFlow
+              ? step === "email"
+                ? "Accept your invite"
+                : "Verify to join"
+              : step === "email"
+                ? "Sign in with magic link"
+                : "Enter verification code"}
+          </CardTitle>
           <CardDescription>
-            {step === "email"
-              ? "Use your email to receive a secure one-time code."
-              : `We sent a code to ${email}. Enter it below to continue.`}
+            {isInviteFlow
+              ? step === "email"
+                ? "Sign in with the invited email below to join the team."
+                : `We sent a code to ${email}. Enter it to join the team.`
+              : step === "email"
+                ? "Use your email to receive a secure one-time code."
+                : `We sent a code to ${email}. Enter it below to continue.`}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -106,9 +134,10 @@ export default function WelcomeScreen() {
                 onChangeText={setEmail}
                 onSubmitEditing={sendCode}
                 placeholder="you@example.com"
+                editable={!isInviteFlow}
               />
               <Button loading={submitting} onPress={sendCode}>
-                Send code
+                {isInviteFlow ? "Send code to join" : "Send code"}
               </Button>
             </View>
           ) : (

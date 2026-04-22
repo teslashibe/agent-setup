@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { MessageSquarePlus, Sparkles } from "lucide-react-native";
@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Text } from "@/components/ui/Text";
-import { createSession, listSessions, type Session } from "@/services/agent";
+import { useAuthSession } from "@/providers/AuthSessionProvider";
+import { useTeams } from "@/providers/TeamsProvider";
+import { createSession, listSessions, type ListScope, type Session } from "@/services/agent";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -24,14 +26,22 @@ function relativeTime(iso: string): string {
 
 export default function SessionsScreen() {
   const router = useRouter();
+  const { user } = useAuthSession();
+  const { active, can } = useTeams();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [scope, setScope] = useState<ListScope>("mine");
+
+  // Only admins+ can list "all" sessions in the active team. Funnels through
+  // the central can() table so the rule lives in one place.
+  const canSeeAll = can("agent.viewAllSessions");
+  const effectiveScope: ListScope = canSeeAll ? scope : "mine";
 
   const load = useCallback(async () => {
     try {
-      const data = await listSessions();
+      const data = await listSessions(effectiveScope);
       setSessions(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load sessions";
@@ -40,13 +50,19 @@ export default function SessionsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [effectiveScope]);
 
   useFocusEffect(
     useCallback(() => {
       void load();
     }, [load])
   );
+
+  // Reload when the active team or scope changes so the list always reflects
+  // the current X-Team-ID context.
+  useEffect(() => {
+    void load();
+  }, [active?.team.id, load]);
 
   const handleNew = useCallback(async () => {
     setCreating(true);
@@ -71,15 +87,28 @@ export default function SessionsScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <View className="flex-row items-center justify-between px-5 pt-12 pb-4">
-        <View>
+      <View className="flex-row items-center justify-between px-5 pt-12 pb-2">
+        <View className="flex-1 pr-3">
           <Text variant="h2">Chats</Text>
-          <Text variant="muted">Your agent conversations</Text>
+          <Text variant="muted" numberOfLines={1}>
+            {active ? active.team.name : "Your agent conversations"}
+          </Text>
         </View>
         <Button size="sm" loading={creating} onPress={handleNew} icon={<MessageSquarePlus size={16} color="#06070A" />}>
           New
         </Button>
       </View>
+
+      {canSeeAll ? (
+        <View className="flex-row items-center gap-2 px-5 pb-3">
+          <Pressable onPress={() => setScope("mine")}>
+            <Badge variant={scope === "mine" ? "default" : "outline"}>Mine</Badge>
+          </Pressable>
+          <Pressable onPress={() => setScope("all")}>
+            <Badge variant={scope === "all" ? "default" : "outline"}>All in team</Badge>
+          </Pressable>
+        </View>
+      ) : null}
 
       <FlatList
         data={sessions}
@@ -104,25 +133,30 @@ export default function SessionsScreen() {
             onAction={handleNew}
           />
         }
-        renderItem={({ item }) => (
-          <Pressable onPress={() => router.push(`/(app)/chat/${item.id}`)}>
-            <Card>
-              <CardContent>
-                <View className="flex-row items-center justify-between">
-                  <Text variant="large" numberOfLines={1} className="flex-1 pr-2">
-                    {item.title || "Untitled chat"}
-                  </Text>
-                  <Badge variant="secondary">{relativeTime(item.updated_at)}</Badge>
-                </View>
-                {item.model ? (
-                  <Text variant="muted" className="mt-1" numberOfLines={1}>
-                    {item.model}
-                  </Text>
-                ) : null}
-              </CardContent>
-            </Card>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          // In "all" scope, show whose session this is so admins can tell
+          // their own from other members'.
+          const otherUser = scope === "all" && user && item.user_id !== user.id;
+          return (
+            <Pressable onPress={() => router.push(`/(app)/chat/${item.id}`)}>
+              <Card>
+                <CardContent>
+                  <View className="flex-row items-center justify-between">
+                    <Text variant="large" numberOfLines={1} className="flex-1 pr-2">
+                      {item.title || "Untitled chat"}
+                    </Text>
+                    <Badge variant="secondary">{relativeTime(item.updated_at)}</Badge>
+                  </View>
+                  {otherUser ? (
+                    <Text variant="muted" className="mt-1" numberOfLines={1}>
+                      Member: {item.user_id.slice(0, 8)}…
+                    </Text>
+                  ) : null}
+                </CardContent>
+              </Card>
+            </Pressable>
+          );
+        }}
       />
     </View>
   );

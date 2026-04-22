@@ -17,3 +17,6 @@ mobile/.expo-shared/
 mobile/dist/
 mobile/web-build/
 mobile/.env.local
+
+# git worktrees
+.worktrees/

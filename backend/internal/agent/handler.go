@@ -10,8 +10,12 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
+	"github.com/teslashibe/agent-setup/backend/internal/teams"
 )
 
+// Handler exposes /api/agent/* under a /api group that has already resolved
+// the active team via teams.Middleware.RequireTeam, so handlers can safely
+// read team_id and team_role from locals.
 type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
@@ -26,42 +30,78 @@ func (h *Handler) Mount(r fiber.Router, runLimiter fiber.Handler) {
 }
 
 func (h *Handler) CreateSession(c *fiber.Ctx) error {
-	var req struct{ Title string `json:"title"` }
+	var req struct {
+		Title string `json:"title"`
+	}
 	if err := c.BodyParser(&req); err != nil {
 		return apperrors.ErrBadRequest
 	}
-	sess, err := h.svc.CreateSession(c.UserContext(), apperrors.UserID(c), req.Title)
+	sess, err := h.svc.CreateSession(c.UserContext(), apperrors.TeamID(c), apperrors.UserID(c), req.Title)
 	if err != nil {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(sess)
 }
 
+// ListSessions returns sessions in the active team. Members always see only
+// their own sessions; admins/owners default to "mine" but can pass ?scope=all
+// to see every session in the team.
 func (h *Handler) ListSessions(c *fiber.Ctx) error {
-	sessions, err := h.svc.Store().ListSessions(c.UserContext(), apperrors.UserID(c))
-	if err != nil {
-		return err
+	teamID := apperrors.TeamID(c)
+	userID := apperrors.UserID(c)
+	role := teams.Role(apperrors.TeamRole(c))
+
+	scope := strings.ToLower(strings.TrimSpace(c.Query("scope")))
+	switch scope {
+	case "", "mine":
+		sessions, err := h.svc.Store().ListSessionsInTeam(c.UserContext(), teamID, userID)
+		if err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{"sessions": sessions, "scope": "mine"})
+	case "all":
+		if !role.AtLeast(teams.RoleAdmin) {
+			return apperrors.ErrInsufficientRole
+		}
+		sessions, err := h.svc.Store().ListSessionsInTeam(c.UserContext(), teamID, "")
+		if err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{"sessions": sessions, "scope": "all"})
+	default:
+		return apperrors.New(fiber.StatusBadRequest, "scope must be 'mine' or 'all'")
 	}
-	return c.JSON(fiber.Map{"sessions": sessions})
 }
 
 func (h *Handler) GetSession(c *fiber.Ctx) error {
-	sess, err := h.svc.Store().GetSession(c.UserContext(), apperrors.UserID(c), c.Params("id"))
+	sess, err := h.lookup(c)
 	if err != nil {
 		return err
 	}
 	return c.JSON(sess)
 }
 
+// DeleteSession allows the session owner to delete their own session, or any
+// admin+ to delete a session in the team. Members deleting another member's
+// session get 403 even if they could read it via /sessions?scope=mine (which
+// they couldn't anyway, since lookup() rejects the read first).
 func (h *Handler) DeleteSession(c *fiber.Ctx) error {
-	if err := h.svc.Store().DeleteSession(c.UserContext(), apperrors.UserID(c), c.Params("id")); err != nil {
+	sess, err := h.lookup(c)
+	if err != nil {
+		return err
+	}
+	role := teams.Role(apperrors.TeamRole(c))
+	if sess.UserID != apperrors.UserID(c) && !role.AtLeast(teams.RoleAdmin) {
+		return apperrors.ErrInsufficientRole
+	}
+	if err := h.svc.Store().DeleteSessionInTeam(c.UserContext(), apperrors.TeamID(c), sess.ID); err != nil {
 		return err
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (h *Handler) ListMessages(c *fiber.Ctx) error {
-	sess, err := h.svc.Store().GetSession(c.UserContext(), apperrors.UserID(c), c.Params("id"))
+	sess, err := h.lookup(c)
 	if err != nil {
 		return err
 	}
@@ -72,12 +112,20 @@ func (h *Handler) ListMessages(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"messages": messages})
 }
 
+// Run streams the assistant's reply. Only the session owner may run a session
+// (admins can read but not impersonate).
 func (h *Handler) Run(c *fiber.Ctx) error {
-	sess, err := h.svc.Store().GetSession(c.UserContext(), apperrors.UserID(c), c.Params("id"))
+	sess, err := h.lookup(c)
 	if err != nil {
 		return err
 	}
-	var req struct{ Message string `json:"message"` }
+	if sess.UserID != apperrors.UserID(c) {
+		return apperrors.ErrInsufficientRole
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
 	if err := c.BodyParser(&req); err != nil {
 		return apperrors.ErrBadRequest
 	}
@@ -112,4 +160,23 @@ func (h *Handler) Run(c *fiber.Ctx) error {
 		}
 	}))
 	return nil
+}
+
+// lookup loads a session in the active team and enforces the read rule:
+// owner of the session, or any admin+ in the team.
+func (h *Handler) lookup(c *fiber.Ctx) (Session, error) {
+	teamID := apperrors.TeamID(c)
+	userID := apperrors.UserID(c)
+	role := teams.Role(apperrors.TeamRole(c))
+
+	sess, err := h.svc.Store().GetSessionInTeam(c.UserContext(), teamID, c.Params("id"))
+	if err != nil {
+		return Session{}, err
+	}
+	if sess.UserID != userID && !role.AtLeast(teams.RoleAdmin) {
+		// Members trying to peek at another member's session get 404, not 403,
+		// so we don't leak existence.
+		return Session{}, apperrors.ErrNotFound
+	}
+	return sess, nil
 }

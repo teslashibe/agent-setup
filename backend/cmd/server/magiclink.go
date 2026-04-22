@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,9 +15,10 @@ import (
 
 	"github.com/teslashibe/agent-setup/backend/internal/auth"
 	"github.com/teslashibe/agent-setup/backend/internal/config"
+	"github.com/teslashibe/agent-setup/backend/internal/teams"
 )
 
-func newMagicLinkService(cfg config.Config, pool *pgxpool.Pool, authSvc *auth.Service) (*magiclink.Service, error) {
+func newMagicLinkService(cfg config.Config, pool *pgxpool.Pool, authSvc *auth.Service, teamsSvc *teams.Service) (*magiclink.Service, *codeStoreAdapter, error) {
 	magicCfg := magiclink.Config{
 		JWTSecret:   cfg.JWTSecret,
 		AppURL:      cfg.AppURL,
@@ -31,31 +33,110 @@ func newMagicLinkService(cfg config.Config, pool *pgxpool.Pool, authSvc *auth.Se
 	}
 
 	if err := magicCfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid magiclink config: %w", err)
+		return nil, nil, fmt.Errorf("invalid magiclink config: %w", err)
 	}
 
-	codeStore := &codeStoreAdapter{pool: pool}
-	userStore := &userStoreAdapter{authSvc: authSvc}
+	codeStore := newCodeStoreAdapter(pool)
+	userStore := &userStoreAdapter{authSvc: authSvc, teamsSvc: teamsSvc}
 
 	var sender magiclink.EmailSender = &devEmailSender{}
 	if strings.TrimSpace(cfg.ResendAPIKey) != "" {
 		sender = resend.New(cfg.ResendAPIKey, cfg.AuthEmailFrom)
 	}
 
-	return magiclink.New(magicCfg, codeStore, userStore, sender, nil), nil
+	return magiclink.New(magicCfg, codeStore, userStore, sender, nil), codeStore, nil
 }
 
+// codeStoreAdapter persists magic-link codes/tokens and (optionally) the
+// invite_token tying this attempt to a pending team invite. The invite token
+// is stashed in-memory keyed by lower-cased email and consumed by the next
+// Create call — this keeps the magiclink.CodeStore interface untouched while
+// still threading our extra payload through.
 type codeStoreAdapter struct {
-	pool *pgxpool.Pool
+	pool           *pgxpool.Pool
+	pendingInvites sync.Map // map[string]string (email → invite_token)
+}
+
+func newCodeStoreAdapter(pool *pgxpool.Pool) *codeStoreAdapter {
+	return &codeStoreAdapter{pool: pool}
+}
+
+// SetPendingInvite records an invite_token to attach to the next Create call
+// for the given email. Calling with an empty inviteToken clears any pending
+// value, preventing leaks across login attempts.
+func (s *codeStoreAdapter) SetPendingInvite(email, inviteToken string) {
+	email = normalizeEmail(email)
+	if email == "" {
+		return
+	}
+	if strings.TrimSpace(inviteToken) == "" {
+		s.pendingInvites.Delete(email)
+		return
+	}
+	s.pendingInvites.Store(email, strings.TrimSpace(inviteToken))
+}
+
+// LookupInviteByToken returns the invite_token recorded against the row whose
+// magic-link `token` matches. Empty string when no invite was attached.
+func (s *codeStoreAdapter) LookupInviteByToken(ctx context.Context, magicToken string) (string, error) {
+	var invite *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT invite_token FROM auth_codes
+		WHERE token = $1
+		LIMIT 1`,
+		strings.TrimSpace(magicToken),
+	).Scan(&invite)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	if invite == nil {
+		return "", nil
+	}
+	return *invite, nil
+}
+
+// LookupInviteByEmail returns the invite_token from the most recent auth_code
+// for the given email, prioritising rows that were just consumed (so /verify
+// can inspect them after VerifyCode succeeded).
+func (s *codeStoreAdapter) LookupInviteByEmail(ctx context.Context, email string) (string, error) {
+	var invite *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT invite_token FROM auth_codes
+		WHERE email = $1
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		normalizeEmail(email),
+	).Scan(&invite)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	if invite == nil {
+		return "", nil
+	}
+	return *invite, nil
 }
 
 func (s *codeStoreAdapter) Create(ctx context.Context, email, code, token string, expiresAt time.Time) error {
-	const query = `
-		INSERT INTO auth_codes (email, code, token, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`
+	email = normalizeEmail(email)
 
-	_, err := s.pool.Exec(ctx, query, strings.ToLower(strings.TrimSpace(email)), code, token, expiresAt)
+	var invitePtr *string
+	if v, ok := s.pendingInvites.LoadAndDelete(email); ok {
+		if str, _ := v.(string); str != "" {
+			invitePtr = &str
+		}
+	}
+
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO auth_codes (email, code, token, expires_at, invite_token)
+		VALUES ($1, $2, $3, $4, $5)`,
+		email, code, token, expiresAt, invitePtr,
+	)
 	return err
 }
 
@@ -73,7 +154,7 @@ func (s *codeStoreAdapter) ConsumeByCode(ctx context.Context, email, code string
 		used      bool
 		expiresAt time.Time
 	)
-	err := s.pool.QueryRow(ctx, lookupQuery, strings.ToLower(strings.TrimSpace(email)), strings.TrimSpace(code)).Scan(&id, &used, &expiresAt)
+	err := s.pool.QueryRow(ctx, lookupQuery, normalizeEmail(email), strings.TrimSpace(code)).Scan(&id, &used, &expiresAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return magiclink.ErrInvalidCode
@@ -137,15 +218,21 @@ func (s *codeStoreAdapter) LookupByToken(ctx context.Context, token string) (str
 }
 
 type userStoreAdapter struct {
-	authSvc *auth.Service
+	authSvc  *auth.Service
+	teamsSvc *teams.Service
 }
 
 func (s *userStoreAdapter) UpsertUser(ctx context.Context, identityKey, email, displayName string) (string, error) {
-	user, err := s.authSvc.UpsertIdentity(ctx, identityKey, email, displayName)
+	res, err := s.authSvc.UpsertIdentity(ctx, identityKey, email, displayName)
 	if err != nil {
 		return "", err
 	}
-	return user.ID, nil
+	if _, err := s.teamsSvc.EnsurePersonalTeam(ctx, res.User.ID, res.User.Name, res.User.Email); err != nil {
+		// Bootstrap failure is fatal — without a personal team the user has
+		// nowhere to land. Surface it so the auth flow short-circuits cleanly.
+		return "", fmt.Errorf("bootstrap personal team: %w", err)
+	}
+	return res.User.ID, nil
 }
 
 func (s *userStoreAdapter) GetUserByEmail(ctx context.Context, email string) (string, string, error) {
@@ -161,4 +248,8 @@ type devEmailSender struct{}
 func (s *devEmailSender) Send(_ context.Context, to, subject, htmlBody string) error {
 	log.Printf("[magiclink-dev-email] to=%s subject=%q body=%q", to, subject, htmlBody)
 	return nil
+}
+
+func normalizeEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }

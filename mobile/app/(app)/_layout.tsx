@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 
 import { FloatingTabBar } from "@/components/FloatingTabBar";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
+import { TEAMS_ENABLED } from "@/config";
 
 // Dev-only escape hatch so the web preview can render the (app) shell
 // without going through magic-link auth. Gated behind an env var so it
@@ -39,6 +40,12 @@ export default function AppLayout() {
   return (
     <Tabs tabBar={(props) => <FloatingTabBar {...props} />} screenOptions={screenOptions}>
       <Tabs.Screen name="index" options={{ title: "Chats" }} />
+      {/* When TEAMS_ENABLED is false the routes still exist (so deep links
+          don't 404), but href: null hides the Teams pill from the tab bar. */}
+      <Tabs.Screen
+        name="teams"
+        options={TEAMS_ENABLED ? { title: "Teams" } : { title: "Teams", href: null }}
+      />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
       <Tabs.Screen name="chat" options={{ href: null }} />
     </Tabs>
