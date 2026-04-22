@@ -18,6 +18,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...config,
     name: "Claude Agent Go",
     slug: "claude-agent-go",
+    owner: "teslashibe",
     version,
     scheme: "agentapp",
     userInterfaceStyle: "dark",
@@ -33,6 +34,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     plugins: ["expo-router", "expo-web-browser", "expo-secure-store"],
     experiments: {
       typedRoutes: true
+    },
+    extra: {
+      eas: {
+        projectId: "88f1130e-f72f-4f93-a60f-fc25e556c06b"
+      }
     }
   };
 };
