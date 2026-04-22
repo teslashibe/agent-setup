@@ -48,11 +48,12 @@ class NotificationCaptureModule : Module() {
         }
 
         Function("openSettings") {
-            val ctx = appContext.reactContext ?: return@Function
-            val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            appContext.reactContext?.let { ctx ->
+                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                ctx.startActivity(intent)
             }
-            ctx.startActivity(intent)
         }
 
         Function("isEnabled") { store.isEnabled() }
