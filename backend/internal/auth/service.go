@@ -23,6 +23,13 @@ type User struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// UpsertResult adds an "is this row brand new?" signal so callers can wire
+// first-login side-effects (e.g. bootstrap a personal team).
+type UpsertResult struct {
+	User    User
+	IsNewly bool
+}
+
 type Service struct{ pool *pgxpool.Pool }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
@@ -55,15 +62,26 @@ func (s *Service) GetByEmail(ctx context.Context, email string) (User, error) {
 	return s.selectUserBy(ctx, "email", strings.ToLower(strings.TrimSpace(email)))
 }
 
-func (s *Service) UpsertIdentity(ctx context.Context, identityKey, email, name string) (User, error) {
+// UpsertIdentity inserts or updates the user row keyed on identity_key. The
+// returned IsNewly flag uses Postgres's `xmax = 0` trick to detect "this row
+// was just inserted" — we only get xmax > 0 when ON CONFLICT fired UPDATE.
+func (s *Service) UpsertIdentity(ctx context.Context, identityKey, email, name string) (UpsertResult, error) {
 	cleanEmail := strings.ToLower(strings.TrimSpace(email))
-	return scanUser(s.pool.QueryRow(ctx, `
+	row := s.pool.QueryRow(ctx, `
 		INSERT INTO users (identity_key, email, name) VALUES ($1, $2, $3)
 		ON CONFLICT (identity_key) DO UPDATE
 			SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = NOW()
-		RETURNING `+userFields,
+		RETURNING `+userFields+`, xmax = 0 AS inserted`,
 		strings.TrimSpace(identityKey), cleanEmail, displayName(name, cleanEmail),
-	))
+	)
+	var (
+		u       User
+		isNewly bool
+	)
+	if err := row.Scan(&u.ID, &u.IdentityKey, &u.Email, &u.Name, &u.CreatedAt, &u.UpdatedAt, &isNewly); err != nil {
+		return UpsertResult{}, err
+	}
+	return UpsertResult{User: u, IsNewly: isNewly}, nil
 }
 
 func displayName(name, email string) string {

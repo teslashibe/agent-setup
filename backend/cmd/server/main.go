@@ -24,6 +24,7 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/apperrors"
 	"github.com/teslashibe/agent-setup/backend/internal/auth"
 	"github.com/teslashibe/agent-setup/backend/internal/config"
+	"github.com/teslashibe/agent-setup/backend/internal/teams"
 )
 
 func main() {
@@ -38,10 +39,12 @@ func main() {
 	defer pool.Close()
 
 	authSvc := auth.NewService(pool)
-	magicSvc, err := newMagicLinkService(cfg, pool, authSvc)
+	teamsSvc := teams.NewService(teams.NewStore(pool), cfg.TeamsDefaultMaxSeats)
+	magicSvc, codeStore, err := newMagicLinkService(cfg, pool, authSvc, teamsSvc)
 	if err != nil {
 		log.Fatalf("magiclink: %v", err)
 	}
+	_ = codeStore // Used by invites handler in a later commit.
 	agentSvc, err := agent.NewService(cfg, agent.NewStore(pool))
 	if err != nil {
 		log.Fatalf("agent: %v", err)
@@ -62,7 +65,7 @@ func main() {
 	app.Post("/auth/magic-link", fiberadapter.SendHandler(magicSvc))
 	app.Post("/auth/verify", fiberadapter.VerifyCodeHandler(magicSvc))
 	app.Get("/auth/verify", fiberadapter.VerifyLinkHandler(magicSvc))
-	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc))
+	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc, teamsSvc))
 
 	authMW := auth.NewMiddleware(magicSvc, authSvc)
 	api := app.Group("/api", authMW.RequireAuth())
@@ -121,7 +124,7 @@ func newPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service) fiber.Handler {
+func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service, teamsSvc *teams.Service) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
 			Email string `json:"email"`
@@ -135,8 +138,12 @@ func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service) fiber.H
 			return apperrors.New(http.StatusBadRequest, "email is required")
 		}
 		identity := "dev|" + email
-		user, err := authSvc.UpsertIdentity(c.UserContext(), identity, email, strings.TrimSpace(req.Name))
+		res, err := authSvc.UpsertIdentity(c.UserContext(), identity, email, strings.TrimSpace(req.Name))
 		if err != nil {
+			return err
+		}
+		user := res.User
+		if _, err := teamsSvc.EnsurePersonalTeam(c.UserContext(), user.ID, user.Name, user.Email); err != nil {
 			return err
 		}
 		token, err := magicSvc.IssueToken(magiclink.Claims{

@@ -23,6 +23,11 @@ type Config struct {
 
 	AgentRunRateLimit  int
 	AgentRunRateWindow time.Duration
+
+	TeamsEnabled         bool
+	TeamsDefaultMaxSeats int
+	TeamsInviteTTL       time.Duration
+	TeamsInviteFromName  string
 }
 
 func Load() Config {
@@ -42,6 +47,11 @@ func Load() Config {
 
 		AgentRunRateLimit:  getEnvInt("AGENT_RUN_RATE_LIMIT", 10),
 		AgentRunRateWindow: time.Duration(getEnvInt("AGENT_RUN_RATE_WINDOW_SECONDS", 60)) * time.Second,
+
+		TeamsEnabled:         getEnvBool("TEAMS_ENABLED", true),
+		TeamsDefaultMaxSeats: getEnvInt("TEAMS_DEFAULT_MAX_SEATS", 25),
+		TeamsInviteTTL:       time.Duration(getEnvInt("TEAMS_INVITE_TTL_HOURS", 168)) * time.Hour,
+		TeamsInviteFromName:  getEnv("TEAMS_INVITE_FROM_NAME", "Agent App"),
 	}
 }
 
@@ -59,6 +69,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseBool(raw)
 	if err != nil {
 		return fallback
 	}
