@@ -52,3 +52,21 @@ export async function getMe() {
   return request<User>("/api/me", { skipTeamHeader: true });
 }
 
+// devAutoLogin hits the unauthenticated dev login endpoint, which upserts the
+// user (and personal team) for the given email and returns a real JWT. The
+// AuthSessionProvider calls this on hydrate when EXPO_PUBLIC_DEV_AUTO_LOGIN
+// is "true", so opening the app in local dev never requires entering an
+// email or pasting a magic-link code. The token is identical in shape to one
+// returned by verifyCode, so applyToken handles it without branching.
+//
+// LOCAL DEV ONLY — the endpoint exists in production builds too but is
+// guarded by NODE_ENV checks on the server side; setting the env var in a
+// shipped build would be visible in the bundle and is unsupported.
+export async function devAutoLogin(email: string, name?: string) {
+  return request<AuthResponse>("/auth/login", {
+    method: "POST",
+    auth: false,
+    body: JSON.stringify({ email, name: name ?? "" })
+  });
+}
+

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -10,12 +12,26 @@ import (
 )
 
 type Middleware struct {
-	magicSvc *magiclink.Service
-	authSvc  *Service
+	magicSvc       *magiclink.Service
+	authSvc        *Service
+	devBypassEmail string
 }
 
 func NewMiddleware(magicSvc *magiclink.Service, authSvc *Service) *Middleware {
 	return &Middleware{magicSvc: magicSvc, authSvc: authSvc}
+}
+
+// EnableDevBypass turns on the unauthenticated-request fallback for the given
+// email. When configured, any request that arrives without an Authorization
+// header is authenticated as the user behind that email, looked up via
+// authSvc. The user MUST already exist (pre-create it at boot via
+// UpsertIdentity + EnsurePersonalTeam) — this hot path stays a single keyed
+// SELECT so it doesn't slow every request. Pass an empty string to disable
+// (the default).
+//
+// LOCAL DEV ONLY. The server logs a loud warning at boot when this is set.
+func (m *Middleware) EnableDevBypass(email string) {
+	m.devBypassEmail = strings.ToLower(strings.TrimSpace(email))
 }
 
 func (m *Middleware) RequireAuth() fiber.Handler {
@@ -57,6 +73,12 @@ func (m *Middleware) authenticator(extract func(c *fiber.Ctx) string) fiber.Hand
 	return func(c *fiber.Ctx) error {
 		header := extract(c)
 		if header == "" {
+			if user, ok := m.devBypassUser(c.UserContext()); ok {
+				apperrors.SetUserID(c, user.ID)
+				apperrors.SetUserEmail(c, user.Email)
+				apperrors.SetUserDisplayName(c, user.Name)
+				return c.Next()
+			}
 			return apperrors.ErrUnauthorized
 		}
 		userID, claims, err := m.magicSvc.AuthenticateBearer(c.UserContext(), header)
@@ -73,4 +95,23 @@ func (m *Middleware) authenticator(extract func(c *fiber.Ctx) string) fiber.Hand
 		c.Locals("auth_claims", claims)
 		return c.Next()
 	}
+}
+
+// devBypassUser returns the bypass user when AUTH_DEV_BYPASS_EMAIL is set
+// and the user already exists in the DB; otherwise (no bypass configured,
+// or user missing) returns ok=false. Errors other than "not found" propagate
+// as ok=false too — fall through to the standard 401 to avoid masking real
+// problems behind a misleading 200.
+func (m *Middleware) devBypassUser(ctx context.Context) (User, bool) {
+	if m.devBypassEmail == "" {
+		return User{}, false
+	}
+	user, err := m.authSvc.GetByEmail(ctx, m.devBypassEmail)
+	if err != nil {
+		if errors.Is(err, apperrors.ErrNotFound) {
+			return User{}, false
+		}
+		return User{}, false
+	}
+	return user, true
 }

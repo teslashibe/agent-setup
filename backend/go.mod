@@ -62,3 +62,13 @@ require (
 	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// TEMPORARY — pin to the local feat/post-analytics-and-rules branch so
+// the MCP server can expose reddit_post_info, reddit_posts_info,
+// reddit_post_comments, the rules-merged reddit_subreddit_about, and
+// the cookie-aware client used by reddit_post_insights before the
+// upstream PR (#6) is tagged.
+//
+// Drop this replace and bump the require above to the new tag once
+// https://github.com/teslashibe/reddit-go/pull/6 merges.
+replace github.com/teslashibe/reddit-go => ../../reddit-go

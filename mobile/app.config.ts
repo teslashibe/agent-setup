@@ -31,7 +31,24 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     android: {
       package: "com.teslashibe.agentapp"
     },
-    plugins: ["expo-router", "expo-web-browser", "expo-secure-store"],
+    plugins: [
+      "expo-router",
+      "expo-web-browser",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          // Permission strings shown by iOS when the chat composer
+          // opens the photo library to attach an image. We only need
+          // library access — no camera, no microphone — because the
+          // attachment flow is "pick a photo you already have".
+          photosPermission:
+            "Allow $(PRODUCT_NAME) to access your photos so you can attach images to your agent's posts.",
+          cameraPermission: false,
+          microphonePermission: false
+        }
+      ]
+    ],
     experiments: {
       typedRoutes: true
     },

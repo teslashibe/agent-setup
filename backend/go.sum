@@ -91,8 +91,6 @@ github.com/teslashibe/nextdoor-go v1.2.1 h1:l8Tryt3O27Z7IYGUFgPK4kX1zSI2zV2wujze
 github.com/teslashibe/nextdoor-go v1.2.1/go.mod h1:BpuveQuCfD8aHzGu5ALz61tR9t0qpaAm6dKPVb5oMV8=
 github.com/teslashibe/producthunt-go v0.3.3 h1:tA22fVE4UhDyC3LT/RQZsRVBBtvPTunuKsfEwUO6Aqw=
 github.com/teslashibe/producthunt-go v0.3.3/go.mod h1:0fPheVn+XnA10m7smkMv2vHYPPmCl9JRMoQiTOxkBBw=
-github.com/teslashibe/reddit-go v1.2.3 h1:DRpXhRbNblPl6kqTD8LuN+UO+I46eXcvp6mXHXBCbSI=
-github.com/teslashibe/reddit-go v1.2.3/go.mod h1:Mxq5g2H6mkZkLKtgimo5gsKpl0pTI600YvCzumUR+3I=
 github.com/teslashibe/redditviral-go v0.2.0 h1:Y2rdFU1RioPR0AgPolQjItGytyeT2AHs1a1/IBIBjvU=
 github.com/teslashibe/redditviral-go v0.2.0/go.mod h1:+W9P/ooqtFY34vRwjH7fZGBW0ehxuJA9GtvbcXGo1Aw=
 github.com/teslashibe/threads-go v1.2.0 h1:ZVdjt3n5BpJYiCMKjYyxkck/Q3Hhlp/gqhk8DuD6cKM=

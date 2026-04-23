@@ -30,8 +30,10 @@ import (
 	"github.com/teslashibe/agent-setup/backend/internal/invites"
 	mcppkg "github.com/teslashibe/agent-setup/backend/internal/mcp"
 	"github.com/teslashibe/agent-setup/backend/internal/mcp/platforms"
+	"github.com/teslashibe/agent-setup/backend/internal/brand"
 	"github.com/teslashibe/agent-setup/backend/internal/notifications"
 	"github.com/teslashibe/agent-setup/backend/internal/teams"
+	"github.com/teslashibe/agent-setup/backend/internal/uploads"
 )
 
 func main() {
@@ -75,7 +77,12 @@ func main() {
 	app.Use(recover.New(), logger.New(), cors.New(cors.Config{
 		AllowOrigins: cfg.CORSAllowedOrigins,
 		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		// X-Team-ID is stamped by the mobile/web client on every team-scoped
+		// request (see mobile/services/api.ts). Omitting it from AllowHeaders
+		// makes the browser silently drop the actual request after a successful
+		// preflight, which surfaces as a confusing "Failed to fetch" client-side
+		// while the server logs only the OPTIONS 204.
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Team-ID",
 	}))
 
 	app.Get("/health", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
@@ -85,6 +92,13 @@ func main() {
 	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc, teamsSvc))
 
 	authMW := auth.NewMiddleware(magicSvc, authSvc)
+	if cfg.AuthDevBypassEmail != "" {
+		if err := primeDevBypassUser(ctx, authSvc, teamsSvc, cfg.AuthDevBypassEmail); err != nil {
+			log.Fatalf("auth dev bypass: %v", err)
+		}
+		authMW.EnableDevBypass(cfg.AuthDevBypassEmail)
+		log.Printf("⚠️  AUTH_DEV_BYPASS_EMAIL=%q is set — every unauthenticated request will be treated as this user. NEVER set this outside local dev.", cfg.AuthDevBypassEmail)
+	}
 	teamMW := teams.NewMiddleware(teamsSvc)
 	api := app.Group("/api", authMW.RequireAuth())
 	api.Get("/me", auth.NewHandler(authSvc).GetMe)
@@ -189,6 +203,10 @@ func main() {
 
 	if err := mountMCP(app, api, authMW, cfg, pool, magicSvc, agentSvc, notifSvc); err != nil {
 		log.Fatalf("mcp: %v", err)
+	}
+
+	if err := mountUploads(app, api, cfg); err != nil {
+		log.Fatalf("uploads: %v", err)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -307,6 +325,18 @@ func mountMCP(
 	if cfg.NotificationsEnabled {
 		provOpts.SystemPrompt = agent.NotificationsSystemPrompt()
 	}
+	// BRAND > NotificationsSystemPrompt. A fork that ships its own
+	// persona almost certainly wants its prompt to be the agent's
+	// voice; the notifications addendum is the template default that
+	// the brand prompt is expected to subsume (or explicitly include).
+	if cfg.Brand != "" {
+		if prompt, ok := brand.PromptForBrand(cfg.Brand); ok {
+			provOpts.SystemPrompt = prompt
+			log.Printf("brand: %s persona active for per-user agents (system prompt: %d chars)", cfg.Brand, len(prompt))
+		} else {
+			log.Printf("brand: unknown BRAND=%q — falling back to default agent prompt (registered: %v)", cfg.Brand, brand.Registered())
+		}
+	}
 	provisioner, err := agent.NewProvisioner(cfg, agentSvc.Client(), pool, endpointFn, provOpts)
 	if err != nil {
 		return fmt.Errorf("agent provisioner: %w", err)
@@ -357,6 +387,59 @@ func firstNonBlank(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// mountUploads wires the chat-attachment storage endpoints. The POST
+// route lives behind the existing JWT-required `api` group; the GET
+// route lives on `app` directly because the agent's MCP tool fetches
+// it (no JWT, just a signed URL).
+//
+// We piggy-back on CREDENTIALS_ENCRYPTION_KEY for the HMAC signing
+// secret so we don't introduce a new env var to rotate. When the key
+// is missing we skip mounting entirely — same logic as mountMCP — so
+// local-dev setups without secrets still come up cleanly.
+func mountUploads(app *fiber.App, api fiber.Router, cfg config.Config) error {
+	if cfg.CredentialsEncryptionKey == "" {
+		log.Printf("uploads: CREDENTIALS_ENCRYPTION_KEY not set — chat image attachments disabled")
+		return nil
+	}
+	base := strings.TrimRight(firstNonBlank(cfg.MCPPublicURL, cfg.AppURL), "/")
+	if base == "" {
+		return fmt.Errorf("MCP_PUBLIC_URL or APP_URL must be set so uploads URLs are reachable")
+	}
+	svc, err := uploads.NewService(uploads.Config{
+		SigningKey: cfg.CredentialsEncryptionKey,
+		BaseURL:    base,
+	})
+	if err != nil {
+		return fmt.Errorf("uploads service: %w", err)
+	}
+	stop := make(chan struct{})
+	svc.StartJanitor(stop)
+
+	h := uploads.NewHandler(svc)
+	h.MountAuth(api)
+	h.MountPublic(app)
+	log.Printf("uploads: chat-attachment storage mounted (TTL 1h, retain 24h)")
+	return nil
+}
+
+// primeDevBypassUser pre-creates the user record (and personal team)
+// for AUTH_DEV_BYPASS_EMAIL at boot so the auth middleware's bypass
+// path is a single keyed SELECT. Without this, the very first
+// unauthenticated request after a fresh DB hits 401 because the
+// middleware refuses to upsert (we don't want a misconfigured prod
+// to silently create users on demand).
+func primeDevBypassUser(ctx context.Context, authSvc *auth.Service, teamsSvc *teams.Service, email string) error {
+	identity := "dev|" + email
+	res, err := authSvc.UpsertIdentity(ctx, identity, email, "")
+	if err != nil {
+		return fmt.Errorf("upsert dev user: %w", err)
+	}
+	if _, err := teamsSvc.EnsurePersonalTeam(ctx, res.User.ID, res.User.Name, res.User.Email); err != nil {
+		return fmt.Errorf("ensure personal team: %w", err)
+	}
+	return nil
 }
 
 func devLoginHandler(magicSvc *magiclink.Service, authSvc *auth.Service, teamsSvc *teams.Service) fiber.Handler {

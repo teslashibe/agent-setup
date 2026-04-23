@@ -200,6 +200,14 @@ func XViral() Plugin {
 }
 
 // Reddit binds reddit-go.
+//
+// Most reddit endpoints work with just the bearer token (token_v2)
+// hitting oauth.reddit.com. PostInsights is the exception: it scrapes
+// www.reddit.com/poststats/{id}/, which redirects bearer-only
+// requests to /login. So when the credential blob includes the full
+// cookies map (as the browser extension and the cred-check helper
+// both emit), forward the whole set to reddit-go so the client can
+// attach it to www.reddit.com requests.
 func Reddit() Plugin {
 	const platform = "reddit"
 	return Plugin{
@@ -217,7 +225,10 @@ func Reddit() Plugin {
 				if token == "" {
 					return nil, errors.New("reddit credential missing 'token' (token_v2 cookie)")
 				}
-				return reddit.New(&reddit.Options{Token: token}), nil
+				return reddit.New(&reddit.Options{
+					Token:   token,
+					Cookies: cred.Cookies,
+				}), nil
 			},
 		},
 		Validator: simpleValidator{platform: platform, requireOneOf: []string{"token", "cookie", "cookies"}},
@@ -451,6 +462,12 @@ func ProductHunt() Plugin {
 }
 
 // Nextdoor binds nextdoor-go.
+//
+// Cookie schema note: Nextdoor renamed their browser auth cookies in late
+// 2025. The current names are `csrftoken` (X-CSRFToken header) and
+// `ndbr_at` (Nextdoor browser access token, HttpOnly). The legacy
+// `xsrf` / `access_token` names are still accepted as fallbacks so older
+// stored credentials keep working while operators rotate.
 func Nextdoor() Plugin {
 	const platform = "nextdoor"
 	return Plugin{
@@ -463,11 +480,16 @@ func Nextdoor() Plugin {
 				}
 				cookies := cred.cookieMap()
 				if cookies == nil {
-					return nil, errors.New("nextdoor credential missing 'cookies' (xsrf, access_token)")
+					return nil, errors.New("nextdoor credential missing 'cookies' (csrftoken, ndbr_at)")
+				}
+				csrf := firstNonEmpty(cookies["csrftoken"], cookies["xsrf"], cred.Extra["csrf_token"])
+				access := firstNonEmpty(cookies["ndbr_at"], cookies["access_token"], cred.Token)
+				if csrf == "" || access == "" {
+					return nil, errors.New("nextdoor credential missing 'csrftoken' and/or 'ndbr_at' cookies (legacy 'xsrf'/'access_token' also accepted)")
 				}
 				return nextdoor.New(nextdoor.Auth{
-					CSRFToken:   firstNonEmpty(cookies["xsrf"], cred.Extra["csrf_token"]),
-					AccessToken: firstNonEmpty(cookies["access_token"], cred.Token),
+					CSRFToken:   csrf,
+					AccessToken: access,
 				})
 			},
 		},

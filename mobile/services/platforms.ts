@@ -65,7 +65,41 @@ export type PlatformMetadata = {
   /** When true the platform doesn't need credentials (deterministic
    * scorers, locally-shelled CLIs). */
   noCredentials?: boolean;
+  /** Functional grouping used by the Settings UI to render section
+   * headers. Picked once per platform so the user-facing categorization
+   * is stable across renders and survives reordering. */
+  category: PlatformCategory;
 };
+
+/** UI-only categorization. Order here is the order categories appear
+ * in the Settings page. */
+export type PlatformCategory = "social" | "scoring" | "tools";
+
+export type PlatformCategoryMetadata = {
+  id: PlatformCategory;
+  title: string;
+  description: string;
+};
+
+export const PLATFORM_CATEGORIES: PlatformCategoryMetadata[] = [
+  {
+    id: "social",
+    title: "Social posting",
+    description:
+      "Cookie-authenticated platforms the agent can read from and post to on your behalf."
+  },
+  {
+    id: "scoring",
+    title: "Trend scoring",
+    description:
+      "Deterministic local scorers that rank candidate posts before publishing. No credentials required."
+  },
+  {
+    id: "tools",
+    title: "Tools & APIs",
+    description: "Adjacent services and local CLIs the agent can call as part of a workflow."
+  }
+];
 
 export type PlatformField = {
   name: string;
@@ -90,7 +124,8 @@ export const PLATFORMS: PlatformMetadata[] = [
     fields: [
       { name: "li_at", label: "li_at cookie", kind: "cookie" },
       { name: "JSESSIONID", label: "JSESSIONID cookie", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "x",
@@ -100,14 +135,16 @@ export const PLATFORMS: PlatformMetadata[] = [
       { name: "auth_token", label: "auth_token cookie", kind: "cookie" },
       { name: "ct0", label: "ct0 cookie", kind: "cookie" },
       { name: "twid", label: "twid cookie (optional)", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "xviral",
     name: "X Viral Scoring",
     helper: "Deterministic local scorer — no credentials required.",
     fields: [],
-    noCredentials: true
+    noCredentials: true,
+    category: "scoring"
   },
   {
     id: "reddit",
@@ -115,14 +152,16 @@ export const PLATFORMS: PlatformMetadata[] = [
     helper: "Signed-in reddit.com → DevTools → Application → Cookies → token_v2.",
     fields: [
       { name: "token_v2", label: "token_v2 cookie", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "redditviral",
     name: "Reddit Viral Scoring",
     helper: "Deterministic local scorer — no credentials required.",
     fields: [],
-    noCredentials: true
+    noCredentials: true,
+    category: "scoring"
   },
   {
     id: "hn",
@@ -130,7 +169,8 @@ export const PLATFORMS: PlatformMetadata[] = [
     helper: "Signed-in news.ycombinator.com → user cookie value.",
     fields: [
       { name: "user", label: "user cookie", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "facebook",
@@ -142,7 +182,8 @@ export const PLATFORMS: PlatformMetadata[] = [
       { name: "fr", label: "fr cookie", kind: "cookie" },
       { name: "datr", label: "datr cookie", kind: "cookie" },
       { name: "sb", label: "sb cookie (optional)", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "instagram",
@@ -153,7 +194,8 @@ export const PLATFORMS: PlatformMetadata[] = [
       { name: "csrftoken", label: "csrftoken cookie", kind: "cookie" },
       { name: "ds_user_id", label: "ds_user_id cookie", kind: "cookie" },
       { name: "datr", label: "datr cookie (optional)", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "tiktok",
@@ -163,7 +205,8 @@ export const PLATFORMS: PlatformMetadata[] = [
       { name: "sessionid", label: "sessionid cookie", kind: "cookie" },
       { name: "tt_csrf_token", label: "tt_csrf_token cookie", kind: "cookie" },
       { name: "msToken", label: "msToken cookie", kind: "cookie" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "threads",
@@ -176,7 +219,8 @@ export const PLATFORMS: PlatformMetadata[] = [
       { name: "ds_user_id", label: "ds_user_id cookie", kind: "cookie" },
       { name: "bearer", label: "Bearer token (optional, write)", kind: "extra" },
       { name: "user_id", label: "Numeric user_id (optional, write)", kind: "extra" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "producthunt",
@@ -184,16 +228,19 @@ export const PLATFORMS: PlatformMetadata[] = [
     helper: "Easiest path: paste a Product Hunt v2 developer token (settings → API).",
     fields: [
       { name: "developer_token", label: "Developer token (BYOK)", kind: "token" }
-    ]
+    ],
+    category: "social"
   },
   {
     id: "nextdoor",
     name: "Nextdoor",
-    helper: "From nextdoor.com signed in, copy the access_token cookie and xsrf token.",
+    helper:
+      "From nextdoor.com signed in, paste the cookie JSON (or the csrftoken + ndbr_at cookie values directly). The legacy xsrf / access_token names are still accepted.",
     fields: [
-      { name: "access_token", label: "access_token cookie", kind: "cookie" },
-      { name: "xsrf", label: "xsrf token", kind: "cookie" }
-    ]
+      { name: "csrftoken", label: "csrftoken cookie", kind: "cookie" },
+      { name: "ndbr_at", label: "ndbr_at cookie", kind: "cookie" }
+    ],
+    category: "social"
   },
   {
     id: "elevenlabs",
@@ -201,14 +248,16 @@ export const PLATFORMS: PlatformMetadata[] = [
     helper: "ElevenLabs settings → Profile → API key (XI-API-Key).",
     fields: [
       { name: "api_key", label: "XI-API-Key", kind: "token" }
-    ]
+    ],
+    category: "tools"
   },
   {
     id: "codegen",
     name: "Codegen (Claude Code)",
     helper: "Runs locally against the `claude` CLI installed on the API host. No credential required.",
     fields: [],
-    noCredentials: true
+    noCredentials: true,
+    category: "tools"
   }
 ];
 

@@ -95,6 +95,26 @@ type Config struct {
 	// NotificationsReplyWindowHrs is the unanswered-message threshold used
 	// by the notifications_pending_actions classifier.
 	NotificationsReplyWindowHrs int
+
+	// Brand selects the agent persona baked into per-user provisioned
+	// agents. When empty the catch-all template prompt is used. Recognized
+	// values are whatever a fork registers in `internal/brand` (e.g.
+	// "seafret"). Unknown values log a warning and fall through to the
+	// default.
+	Brand string
+
+	// AuthDevBypassEmail, when non-empty, makes the auth middleware
+	// short-circuit any request that arrives without an Authorization
+	// header / token query / token path-segment by treating it as if the
+	// configured email had logged in via the dev login flow. Intended for
+	// local development only — gives curl/Postman/scripts a way to hit
+	// authenticated routes with no JWT plumbing. The user record (and
+	// personal team) for this email is pre-created at server boot so the
+	// first request is fast.
+	//
+	// LEAVE BLANK in any deployed environment. The server logs a loud
+	// boot-time warning when this is set.
+	AuthDevBypassEmail string
 }
 
 func Load() Config {
@@ -138,6 +158,9 @@ func Load() Config {
 		NotificationsDefaultPageSize:  getEnvInt("NOTIFICATIONS_DEFAULT_PAGE_SIZE", 50),
 		NotificationsMaxPageSize:      getEnvInt("NOTIFICATIONS_MAX_PAGE_SIZE", 200),
 		NotificationsReplyWindowHrs:   getEnvInt("NOTIFICATIONS_ACTION_REPLY_WINDOW_HOURS", 2),
+
+		Brand:              strings.TrimSpace(os.Getenv("BRAND")),
+		AuthDevBypassEmail: strings.ToLower(strings.TrimSpace(os.Getenv("AUTH_DEV_BYPASS_EMAIL"))),
 	}
 }
 

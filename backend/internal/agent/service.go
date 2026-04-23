@@ -80,26 +80,45 @@ func (s *Service) CreateSession(ctx context.Context, teamID, userID, title strin
 	return s.store.CreateSession(ctx, teamID, userID, title, antSess.ID)
 }
 
-// Run streams agent events for a user message. The Anthropic event stream is
-// opened before sending the message to avoid a race condition.
+// Run streams agent events for a user message.
+//
+// Ordering matters here: the Anthropic event stream re-emits the most
+// recent `session.status_*` event on subscribe, so if we open the stream
+// BEFORE sending the user message we'll always receive the stale
+// `status_idle` from the previous turn (or from session creation) and
+// our consumer will think the run finished before it ever started. Send
+// the user message FIRST so the session transitions to running, then
+// open the stream and ignore any leading `done` events that arrive
+// before we've seen real agent activity.
 func (s *Service) Run(ctx context.Context, sess Session, userText string) (<-chan Event, error) {
 	events := make(chan Event, 32)
 	go func() {
 		defer close(events)
-
-		stream := s.client.Beta.Sessions.Events.StreamEvents(ctx, sess.AnthropicSessionID,
-			anthropic.BetaSessionEventStreamParams{})
-		defer stream.Close()
 
 		if err := s.sendUserMessage(ctx, sess.AnthropicSessionID, userText); err != nil {
 			emit(events, Event{Type: "error", Error: err.Error()})
 			return
 		}
 
+		stream := s.client.Beta.Sessions.Events.StreamEvents(ctx, sess.AnthropicSessionID,
+			anthropic.BetaSessionEventStreamParams{})
+		defer stream.Close()
+
+		seenAgentActivity := false
 		for stream.Next() {
 			ev := translateStreamEvent(stream.Current())
 			if ev == nil {
 				continue
+			}
+			// If the very first event Anthropic re-broadcasts is a stale
+			// `done`/`error` from a previous turn, drop it and keep
+			// listening — real agent events for THIS turn are still on
+			// their way.
+			if !seenAgentActivity && (ev.Type == "done" || ev.Type == "error") {
+				continue
+			}
+			if ev.Type == "text" || ev.Type == "tool_use" || ev.Type == "tool_result" {
+				seenAgentActivity = true
 			}
 			emit(events, *ev)
 			if ev.Type == "done" || ev.Type == "error" {
@@ -176,6 +195,17 @@ func (s *Service) History(ctx context.Context, anthropicSessionID string) ([]Mes
 			appendAssistant(Block{Type: "tool_use", ID: ev.ID, Name: ev.Name})
 		case "agent.tool_result":
 			appendAssistant(Block{Type: "tool_result", ToolID: u.AsAgentToolResult().ToolUseID})
+		case "agent.mcp_tool_use":
+			// MCP tools (Reddit, Nextdoor, ...) emit a different event
+			// type than the built-in bash/file tools — they're a separate
+			// case in the SDK union. Without this, every MCP call is
+			// silently dropped from the rendered transcript even though
+			// the agent did execute it.
+			ev := u.AsAgentMCPToolUse()
+			appendAssistant(Block{Type: "tool_use", ID: ev.ID, Name: ev.Name})
+		case "agent.mcp_tool_result":
+			ev := u.AsAgentMCPToolResult()
+			appendAssistant(Block{Type: "tool_result", ToolID: ev.MCPToolUseID})
 		}
 	}
 	flush()
@@ -199,6 +229,16 @@ func translateStreamEvent(u anthropic.BetaManagedAgentsStreamSessionEventsUnion)
 	case "agent.tool_result":
 		ev := u.AsAgentToolResult()
 		return &Event{Type: "tool_result", ToolID: ev.ToolUseID, IsError: ev.IsError}
+	case "agent.mcp_tool_use":
+		// MCP tools live on a separate event type. See History() above
+		// for full context — without this case, the SSE stream looked
+		// like the agent never did anything even though Anthropic was
+		// hammering our /mcp endpoint.
+		ev := u.AsAgentMCPToolUse()
+		return &Event{Type: "tool_use", Tool: ev.Name, ToolID: ev.ID}
+	case "agent.mcp_tool_result":
+		ev := u.AsAgentMCPToolResult()
+		return &Event{Type: "tool_result", ToolID: ev.MCPToolUseID, IsError: ev.IsError}
 	case "session.status_idle":
 		return &Event{Type: "done"}
 	case "session.error":

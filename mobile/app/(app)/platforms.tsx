@@ -12,7 +12,9 @@ import {
   buildCredential,
   COOKIE_EDITOR_LINK,
   PLATFORMS,
+  PLATFORM_CATEGORIES,
   PlatformMetadata,
+  PlatformCategory,
   PlatformStatus,
   disconnectPlatform,
   listPlatforms,
@@ -273,6 +275,24 @@ export default function PlatformsScreen() {
     return map;
   }, [statuses]);
 
+  // Group platforms by category, preserving the original PLATFORMS order
+  // within each group so the Settings page is deterministic regardless of
+  // how the backend returns statuses.
+  const grouped = useMemo(() => {
+    const buckets = new Map<PlatformCategory, PlatformMetadata[]>();
+    for (const meta of PLATFORMS) {
+      const existing = buckets.get(meta.category);
+      if (existing) {
+        existing.push(meta);
+      } else {
+        buckets.set(meta.category, [meta]);
+      }
+    }
+    return PLATFORM_CATEGORIES
+      .map((cat) => ({ category: cat, items: buckets.get(cat.id) ?? [] }))
+      .filter((g) => g.items.length > 0);
+  }, []);
+
   return (
     <KeyboardAvoidingView
       behavior={RNPlatform.OS === "ios" ? "padding" : undefined}
@@ -298,9 +318,41 @@ export default function PlatformsScreen() {
               onAction={refresh}
             />
           ) : (
-            PLATFORMS.map((meta) => (
-              <PlatformRow key={meta.id} meta={meta} status={byPlatform.get(meta.id)} onChanged={refresh} />
-            ))
+            grouped.map((group) => {
+              // "X of Y connected" is only meaningful for groups whose
+              // members actually carry credentials — render it as a
+              // simple count for credential-less groups instead.
+              const credentialed = group.items.filter((m) => !m.noCredentials);
+              const connected = credentialed.filter(
+                (m) => byPlatform.get(m.id)?.connected
+              ).length;
+              const summary =
+                credentialed.length > 0
+                  ? `${connected} of ${credentialed.length} connected`
+                  : `${group.items.length} ${group.items.length === 1 ? "tool" : "tools"}`;
+
+              return (
+                <View key={group.category.id} className="gap-3">
+                  <View className="flex-row items-baseline justify-between gap-3">
+                    <Text variant="h4">{group.category.title}</Text>
+                    <Text variant="muted">{summary}</Text>
+                  </View>
+                  <Text variant="small" className="text-muted">
+                    {group.category.description}
+                  </Text>
+                  <View className="gap-3">
+                    {group.items.map((meta) => (
+                      <PlatformRow
+                        key={meta.id}
+                        meta={meta}
+                        status={byPlatform.get(meta.id)}
+                        onChanged={refresh}
+                      />
+                    ))}
+                  </View>
+                </View>
+              );
+            })
           )}
         </View>
       </ScrollView>

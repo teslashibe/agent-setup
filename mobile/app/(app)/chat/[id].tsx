@@ -1,48 +1,72 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
-  Pressable,
   ScrollView,
-  TextInput,
   View
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, Wrench } from "lucide-react-native";
+import * as ImagePicker from "expo-image-picker";
 
-import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
-import { Card, CardContent } from "@/components/ui/Card";
-import { Text } from "@/components/ui/Text";
+import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
+import { ChatHeader } from "@/components/chat/ChatHeader";
+import { Composer, type ComposerAttachment } from "@/components/chat/Composer";
+import {
+  MessageBubble,
+  type AssistantBubbleData,
+  type UserBubbleData
+} from "@/components/chat/MessageBubble";
+import { ScrollToLatest } from "@/components/chat/ScrollToLatest";
+import type { ToolPillCall } from "@/components/chat/ToolPill";
 import { listMessages, runSession, type AgentEvent, type Message } from "@/services/agent";
+import { uploadAttachment, type UploadedAttachment } from "@/services/uploads";
 
-type ChatBubble =
-  | { kind: "user"; id: string; text: string }
-  | { kind: "assistant"; id: string; text: string; tools: ToolCall[]; pending: boolean };
+type ChatBubble = UserBubbleData | AssistantBubbleData;
 
-type ToolCall = {
-  id: string;
-  name: string;
-  input?: unknown;
-  output?: unknown;
-  isError?: boolean;
-  done: boolean;
-};
-
-// Anthropic content blocks have a discriminated `type`. We extract just enough
-// to render the conversation history we already persisted.
+// Anthropic content blocks have a discriminated `type`. We extract
+// just enough to render the conversation history we already
+// persisted.
 type AnthropicBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input?: unknown }
   | { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean };
 
+// bubblesFromHistory translates the persisted Anthropic-format
+// message log into the flatter `ChatBubble` array the UI renders.
+//
+// The two subtle bits of logic:
+//
+//   1. tool_result blocks live in user-role messages (Anthropic
+//      convention). We thread them back into the assistant bubble
+//      that issued the corresponding tool_use by tracking a
+//      `tool_use_id → ToolCall` map.
+//
+//   2. After the walk, any tool call still flagged `done: false`
+//      while there are subsequent messages gets force-marked done.
+//      This catches the "I reloaded mid-conversation" case where the
+//      tool_result was persisted but didn't get matched (e.g. an
+//      older message version, or an out-of-order persistence quirk).
+//      The downside — a genuinely-still-running tool would be marked
+//      done — is acceptable because by the time the operator is
+//      viewing persisted history, no tools are actually still in
+//      flight.
 function bubblesFromHistory(messages: Message[]): ChatBubble[] {
   const out: ChatBubble[] = [];
-  const toolCalls = new Map<string, ToolCall>();
+  const toolCalls = new Map<string, ToolPillCall>();
 
-  for (const m of messages) {
+  // Stable per-row id so React keys are guaranteed unique even if
+  // the persisted message id is missing or duplicated. Using the
+  // array index as a suffix is fine because history is read once
+  // and re-renders use the same indexes.
+  const rowId = (m: Message, mi: number) =>
+    m.id ? `${m.id}` : `m-${mi}`;
+
+  for (let mi = 0; mi < messages.length; mi++) {
+    const m = messages[mi];
     const blocks = Array.isArray(m.content) ? (m.content as AnthropicBlock[]) : [];
 
     if (m.role === "user") {
@@ -62,18 +86,18 @@ function bubblesFromHistory(messages: Message[]): ChatBubble[] {
         }
       }
       if (text.trim().length > 0) {
-        out.push({ kind: "user", id: m.id, text });
+        out.push({ kind: "user", id: rowId(m, mi), text });
       }
       continue;
     }
 
     let text = "";
-    const tools: ToolCall[] = [];
+    const tools: ToolPillCall[] = [];
     for (const block of blocks) {
       if (block.type === "text") {
         text += (text ? "\n" : "") + block.text;
       } else if (block.type === "tool_use") {
-        const tc: ToolCall = {
+        const tc: ToolPillCall = {
           id: block.id,
           name: block.name,
           input: block.input,
@@ -83,11 +107,53 @@ function bubblesFromHistory(messages: Message[]): ChatBubble[] {
         toolCalls.set(block.id, tc);
       }
     }
-    out.push({ kind: "assistant", id: m.id, text, tools, pending: false });
+    out.push({ kind: "assistant", id: rowId(m, mi), text, tools, pending: false });
+  }
+
+  // Defensive sweep: in persisted history every tool call has
+  // already settled — the agent couldn't have produced its written
+  // response (and we wouldn't have persisted the message) without
+  // the tool result coming back. The earlier walk only flips `done`
+  // when it can pair the tool_use with a tool_result block; if the
+  // pairing fell through (older message format, the agent never
+  // wrote anything after the call, etc.) we mark it done here so
+  // the pill renders "done" instead of a forever-spinning
+  // "running…".
+  for (const b of out) {
+    if (b.kind !== "assistant") continue;
+    for (const tool of b.tools) {
+      if (!tool.done) tool.done = true;
+    }
   }
 
   return out;
 }
+
+// PendingAttachment is a single image the operator has attached to
+// the in-progress draft. We hold both the local picker URI (for
+// showing a thumbnail before the upload completes) and, once the
+// `/api/uploads` round-trip lands, the signed URL we'll embed in the
+// outgoing message and the agent's MCP tool will fetch.
+type PendingAttachment = {
+  key: string;
+  localUri: string;
+  fileName?: string;
+  mimeType?: string;
+  size?: number;
+  status: "uploading" | "ready" | "error";
+  uploaded?: UploadedAttachment;
+  errorMessage?: string;
+};
+
+// Mirror the backend's MaxBytes (10 MiB). Catching this client-side
+// keeps us from streaming a 12 MB photo just to get a 413 back.
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+// Distance (in px) from the bottom of the scroll content under
+// which we count the user as "near the bottom" — used both to
+// decide whether to autoscroll on new content and whether to show
+// the "jump to latest" button.
+const NEAR_BOTTOM_THRESHOLD = 80;
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -96,14 +162,31 @@ export default function ChatScreen() {
 
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [picking, setPicking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [nearBottom, setNearBottom] = useState(true);
+  const [hasUnseenStreamUpdate, setHasUnseenStreamUpdate] = useState(false);
+
   const scrollRef = useRef<ScrollView>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const nearBottomRef = useRef(true);
 
-  const scrollToEnd = useCallback(() => {
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  const scrollToEnd = useCallback((animated = true) => {
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
   }, []);
+
+  // Auto-scroll only if the user is already pinned to the bottom.
+  // Otherwise we'd yank them out of mid-history reading every time a
+  // streamed token arrived.
+  const maybeAutoScroll = useCallback(() => {
+    if (nearBottomRef.current) {
+      scrollToEnd();
+    } else {
+      setHasUnseenStreamUpdate(true);
+    }
+  }, [scrollToEnd]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,12 +209,122 @@ export default function ChatScreen() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  const handleScroll = useCallback((ev: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = ev.nativeEvent;
+    const distanceFromBottom =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    const next = distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
+    nearBottomRef.current = next;
+    setNearBottom(next);
+    if (next) setHasUnseenStreamUpdate(false);
+  }, []);
+
+  const updateAttachment = useCallback(
+    (key: string, mutator: (a: PendingAttachment) => PendingAttachment) => {
+      setAttachments((prev) => prev.map((a) => (a.key === key ? mutator(a) : a)));
+    },
+    []
+  );
+
+  const removeAttachment = useCallback((key: string) => {
+    setAttachments((prev) => prev.filter((a) => a.key !== key));
+  }, []);
+
+  const startUpload = useCallback(
+    async (att: PendingAttachment) => {
+      try {
+        const uploaded = await uploadAttachment({
+          uri: att.localUri,
+          name: att.fileName,
+          mimeType: att.mimeType
+        });
+        updateAttachment(att.key, (a) => ({ ...a, status: "ready", uploaded }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Upload failed";
+        updateAttachment(att.key, (a) => ({ ...a, status: "error", errorMessage: message }));
+      }
+    },
+    [updateAttachment]
+  );
+
+  const pickImage = useCallback(async () => {
+    if (picking || running) return;
+    setPicking(true);
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Photos access needed",
+          "Allow photo library access in Settings to attach images to your messages."
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: false,
+        // Light compression — most platforms accept images up to
+        // ~20MB and typical phone shots are 4-8MB at quality 0.85,
+        // which keeps us comfortably under the backend's 10MB cap.
+        quality: 0.85,
+        exif: false
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      const asset = result.assets[0];
+      if (asset.fileSize && asset.fileSize > MAX_ATTACHMENT_BYTES) {
+        Alert.alert(
+          "Image too large",
+          "Pick an image under 10MB. Long-press the photo in Photos and re-export at a smaller size."
+        );
+        return;
+      }
+      const att: PendingAttachment = {
+        key: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        localUri: asset.uri,
+        fileName: asset.fileName ?? undefined,
+        mimeType: asset.mimeType ?? undefined,
+        size: asset.fileSize ?? undefined,
+        status: "uploading"
+      };
+      setAttachments((prev) => [...prev, att]);
+      void startUpload(att);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not open photo library";
+      Alert.alert("Picker error", message);
+    } finally {
+      setPicking(false);
+    }
+  }, [picking, running, startUpload]);
+
+  const hasUploadingAttachment = attachments.some((a) => a.status === "uploading");
+  const readyAttachments = attachments.filter(
+    (a): a is PendingAttachment & { status: "ready"; uploaded: UploadedAttachment } =>
+      a.status === "ready" && !!a.uploaded
+  );
+
+  const composerAttachments: ComposerAttachment[] = attachments.map((a) => ({
+    key: a.key,
+    localUri: a.localUri,
+    status: a.status
+  }));
+
   const send = useCallback(async () => {
     const text = draft.trim();
-    if (!text || running) return;
+    if (running || hasUploadingAttachment) return;
+    if (!text && readyAttachments.length === 0) return;
+
+    // Compose the wire-format message: user text first (if any),
+    // then a blank line, then one `![name](signed-url)` per
+    // attachment. The agent's system prompt tells it to look for
+    // `![…](https://…)` markers in the operator's turn and pass the
+    // URL straight through to its image-aware tools.
+    const imageBlock = readyAttachments
+      .map((a) => `![${a.uploaded.original_name || "attached image"}](${a.uploaded.url})`)
+      .join("\n");
+    const wire = [text, imageBlock].filter((part) => part.length > 0).join("\n\n");
 
     setDraft("");
-    const userBubble: ChatBubble = { kind: "user", id: `local-${Date.now()}`, text };
+    setAttachments([]);
+    const userBubble: ChatBubble = { kind: "user", id: `local-${Date.now()}`, text: wire };
     const assistantBubble: ChatBubble = {
       kind: "assistant",
       id: `local-${Date.now()}-a`,
@@ -140,13 +333,17 @@ export default function ChatScreen() {
       pending: true
     };
     setBubbles((prev) => [...prev, userBubble, assistantBubble]);
+    // Pin to bottom on send so the operator follows their own
+    // turn — they almost always want to see what comes back.
+    nearBottomRef.current = true;
+    setHasUnseenStreamUpdate(false);
     scrollToEnd();
     setRunning(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const updateAssistant = (mutator: (b: Extract<ChatBubble, { kind: "assistant" }>) => void) => {
+    const updateAssistant = (mutator: (b: AssistantBubbleData) => void) => {
       setBubbles((prev) => {
         const next = [...prev];
         const idx = next.findIndex((b) => b.id === assistantBubble.id);
@@ -161,9 +358,9 @@ export default function ChatScreen() {
     };
 
     try {
-      for await (const ev of runSession(sessionId, text, controller.signal)) {
+      for await (const ev of runSession(sessionId, wire, controller.signal)) {
         applyEvent(ev, updateAssistant);
-        scrollToEnd();
+        maybeAutoScroll();
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Stream failed";
@@ -178,12 +375,29 @@ export default function ChatScreen() {
       setRunning(false);
       abortRef.current = null;
     }
-  }, [draft, running, scrollToEnd, sessionId]);
+  }, [
+    draft,
+    hasUploadingAttachment,
+    maybeAutoScroll,
+    readyAttachments,
+    running,
+    scrollToEnd,
+    sessionId
+  ]);
 
-  const headerTitle = useMemo(() => {
-    const firstUser = bubbles.find((b) => b.kind === "user") as Extract<ChatBubble, { kind: "user" }> | undefined;
-    return firstUser?.text.slice(0, 40) ?? "Chat";
-  }, [bubbles]);
+  const onStop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const onPickSuggestion = useCallback((prompt: string) => {
+    setDraft(prompt);
+  }, []);
+
+  const onJumpToLatest = useCallback(() => {
+    nearBottomRef.current = true;
+    setHasUnseenStreamUpdate(false);
+    scrollToEnd();
+  }, [scrollToEnd]);
 
   if (loading) {
     return (
@@ -193,64 +407,78 @@ export default function ChatScreen() {
     );
   }
 
+  const empty = bubbles.length === 0;
+
   return (
     <KeyboardAvoidingView
       className="flex-1 bg-background"
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
-      <View className="flex-row items-center gap-3 px-5 pt-12 pb-3 border-b border-border">
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <ArrowLeft size={22} color="#F8FAFC" />
-        </Pressable>
-        <Text variant="large" numberOfLines={1} className="flex-1">
-          {headerTitle}
-        </Text>
+      <ChatHeader
+        isStreaming={running}
+        onBack={() => router.back()}
+        onStop={onStop}
+      />
+
+      <View className="relative flex-1">
+        <ScrollView
+          ref={scrollRef}
+          className="flex-1"
+          contentContainerStyle={{
+            padding: 16,
+            paddingBottom: 28,
+            gap: 16,
+            flexGrow: 1
+          }}
+          onContentSizeChange={() => {
+            if (nearBottomRef.current) scrollToEnd(false);
+          }}
+          onScroll={handleScroll}
+          scrollEventThrottle={32}
+        >
+          {empty ? (
+            <ChatEmptyState onPick={onPickSuggestion} />
+          ) : (
+            bubbles.map((bubble, idx) => (
+              // Defensive key: persisted message ids should be unique
+              // UUIDs, but if the backend ever sends a row without an
+              // id we fall back to the array index so React doesn't
+              // throw a key-warning at us in dev.
+              <MessageBubble
+                key={bubble.id || `bubble-${idx}`}
+                bubble={bubble}
+              />
+            ))
+          )}
+        </ScrollView>
+
+        <ScrollToLatest
+          visible={!empty && !nearBottom}
+          hasNew={hasUnseenStreamUpdate}
+          onPress={onJumpToLatest}
+        />
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        className="flex-1"
-        contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 24 }}
-        onContentSizeChange={scrollToEnd}
-      >
-        {bubbles.map((bubble) => (
-          <Bubble key={bubble.id} bubble={bubble} />
-        ))}
-      </ScrollView>
-
-      <View className="border-t border-border bg-background px-3 py-3">
-        <View className="flex-row items-end gap-2 rounded-2xl border border-border bg-card px-3 py-2">
-          <TextInput
-            className="flex-1 max-h-32 text-foreground"
-            placeholder="Message your agent…"
-            placeholderTextColor="#9AA4B2"
-            multiline
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={send}
-            editable={!running}
-          />
-          <Pressable
-            onPress={send}
-            disabled={running || draft.trim().length === 0}
-            className="h-9 w-9 items-center justify-center rounded-xl bg-primary disabled:opacity-50"
-          >
-            {running ? (
-              <ActivityIndicator size="small" color="#06070A" />
-            ) : (
-              <Send size={16} color="#06070A" />
-            )}
-          </Pressable>
-        </View>
-      </View>
+      <Composer
+        draft={draft}
+        onChangeDraft={setDraft}
+        attachments={composerAttachments}
+        onPickImage={pickImage}
+        onRemoveAttachment={removeAttachment}
+        picking={picking}
+        onSend={send}
+        running={running}
+        hasUploadingAttachment={hasUploadingAttachment}
+        empty={draft.trim().length === 0 && readyAttachments.length === 0}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 function applyEvent(
   ev: AgentEvent,
-  updateAssistant: (mutator: (b: Extract<ChatBubble, { kind: "assistant" }>) => void) => void
+  updateAssistant: (mutator: (b: AssistantBubbleData) => void) => void
 ) {
   switch (ev.type) {
     case "text":
@@ -288,118 +516,4 @@ function applyEvent(
     default:
       return;
   }
-}
-
-function Bubble({ bubble }: { bubble: ChatBubble }) {
-  if (bubble.kind === "user") {
-    return (
-      <View className="self-end max-w-[85%] rounded-2xl bg-primary px-4 py-2">
-        <Text variant="small" className="text-background">
-          {bubble.text}
-        </Text>
-      </View>
-    );
-  }
-
-  const showCursor = bubble.pending && bubble.text.length === 0 && bubble.tools.length === 0;
-
-  return (
-    <View className="self-start max-w-[90%] gap-2">
-      {bubble.tools.map((tool) => {
-        const credIssue = tool.isError ? detectCredentialIssue(tool.output) : null;
-        return (
-          <Card key={tool.id}>
-            <CardContent className="gap-1">
-              <View className="flex-row items-center gap-2">
-                <Wrench size={14} color={tool.isError ? "#FF5A67" : "#00D4AA"} />
-                <Text variant="small" className="font-semibold">
-                  {tool.name}
-                </Text>
-                <Badge variant={tool.isError ? "destructive" : tool.done ? "default" : "secondary"}>
-                  {tool.isError ? "error" : tool.done ? "done" : "running"}
-                </Badge>
-              </View>
-              {tool.input !== undefined ? (
-                <Text variant="muted" className="text-xs">
-                  input: {safeJson(tool.input)}
-                </Text>
-              ) : null}
-              {tool.done ? (
-                <Text variant="muted" className="text-xs">
-                  output: {safeJson(tool.output)}
-                </Text>
-              ) : null}
-              {credIssue ? <ReconnectCTA platform={credIssue.platform} reason={credIssue.reason} /> : null}
-            </CardContent>
-          </Card>
-        );
-      })}
-      {bubble.text.length > 0 || showCursor ? (
-        <View className="rounded-2xl border border-border bg-card px-4 py-2">
-          <Text variant="small">
-            {bubble.text}
-            {bubble.pending ? " ▌" : ""}
-          </Text>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function safeJson(value: unknown): string {
-  if (value === undefined) return "(none)";
-  try {
-    const s = JSON.stringify(value);
-    return s.length > 240 ? s.slice(0, 240) + "…" : s;
-  } catch {
-    return String(value);
-  }
-}
-
-const CREDENTIAL_ERROR_CODES = new Set([
-  "credential_missing",
-  "credential_invalid",
-  "credential_expired",
-  "credential_unreadable"
-]);
-
-/** When an MCP tool returns a structured credential error, surface a
- * "Reconnect" CTA inline with the failed tool card. The MCP server
- * (`internal/mcp/server.go → mapErr`) emits errors of the shape:
- *   { code: "credential_expired", platform: "linkedin", retryable: true }
- * possibly wrapped inside a JSON-RPC `data` field. We probe several
- * shapes so we degrade gracefully if the wire format evolves. */
-function detectCredentialIssue(output: unknown): { platform: string; reason: string } | null {
-  if (!output || typeof output !== "object") return null;
-  const candidates: any[] = [output as any];
-  if ((output as any).data) candidates.push((output as any).data);
-  if (typeof (output as any).text === "string") {
-    try {
-      candidates.push(JSON.parse((output as any).text));
-    } catch {
-      /* not JSON — give up */
-    }
-  }
-  for (const c of candidates) {
-    if (!c || typeof c !== "object") continue;
-    const code = String(c.code ?? c.error ?? "");
-    if (CREDENTIAL_ERROR_CODES.has(code) && typeof c.platform === "string" && c.platform) {
-      return { platform: c.platform, reason: String(c.message ?? code) };
-    }
-  }
-  return null;
-}
-
-function ReconnectCTA({ platform, reason }: { platform: string; reason: string }) {
-  const router = useRouter();
-  return (
-    <View className="mt-1 gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2">
-      <Text variant="small" className="text-destructive">
-        {platform} credentials need re-connecting: {reason}
-      </Text>
-      <Button size="sm" variant="destructive" onPress={() => router.push("/(app)/platforms")}>
-        Reconnect {platform}
-      </Button>
-    </View>
-  );
 }

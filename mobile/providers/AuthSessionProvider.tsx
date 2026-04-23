@@ -3,8 +3,21 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as SecureStore from "expo-secure-store";
 
-import { getMe, sendMagicLink, type User, verifyCode } from "@/services/auth";
+import { devAutoLogin, getMe, sendMagicLink, type User, verifyCode } from "@/services/auth";
 import { setAccessTokenProvider } from "@/services/api";
+
+// Local-dev convenience: when EXPO_PUBLIC_DEV_AUTO_LOGIN is "true", on
+// first launch (no stored token) the provider auto-fires POST /auth/login
+// using EXPO_PUBLIC_DEV_AUTO_LOGIN_EMAIL (default "dev@local") and skips
+// the magic-link UI entirely. Pairs with the backend's
+// AUTH_DEV_BYPASS_EMAIL but works independently — the mobile path goes
+// through the real /auth/login + JWT flow, so the resulting session is
+// indistinguishable from a real login. The bundled defaults below are
+// safe (off / dev@local) so a forgotten flag in production is a no-op.
+const DEV_AUTO_LOGIN_ENABLED =
+  String(process.env.EXPO_PUBLIC_DEV_AUTO_LOGIN ?? "").toLowerCase() === "true";
+const DEV_AUTO_LOGIN_EMAIL =
+  String(process.env.EXPO_PUBLIC_DEV_AUTO_LOGIN_EMAIL ?? "").trim() || "dev@local";
 
 type AuthSessionContextValue = {
   isLoading: boolean;
@@ -105,14 +118,28 @@ export function AuthSessionProvider({ children }: { children: React.ReactNode })
     const hydrate = async () => {
       try {
         const token = await readStoredToken();
-        if (!token || isTokenExpired(token)) {
-          await clearSession();
+        if (token && !isTokenExpired(token)) {
+          tokenRef.current = token;
+          setIsAuthenticated(true);
+          const profile = await getMe();
+          setUser(profile);
           return;
         }
-        tokenRef.current = token;
-        setIsAuthenticated(true);
-        const profile = await getMe();
-        setUser(profile);
+
+        if (DEV_AUTO_LOGIN_ENABLED) {
+          // No stored token (or expired): silently log in as the dev user.
+          // Failures fall through to the normal sign-in screen so a broken
+          // backend doesn't strand the app on a blank state.
+          try {
+            const session = await devAutoLogin(DEV_AUTO_LOGIN_EMAIL);
+            await applyToken(session.token);
+            return;
+          } catch (err) {
+            console.warn("[auth] dev auto-login failed, showing sign-in", err);
+          }
+        }
+
+        await clearSession();
       } catch {
         await clearSession();
       } finally {
@@ -121,7 +148,7 @@ export function AuthSessionProvider({ children }: { children: React.ReactNode })
     };
 
     void hydrate();
-  }, [clearSession]);
+  }, [applyToken, clearSession]);
 
   const getAccessToken = useCallback(async () => {
     if (!tokenRef.current) {

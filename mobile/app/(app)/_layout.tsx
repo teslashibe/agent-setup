@@ -1,5 +1,5 @@
 import { Redirect, Tabs } from "expo-router";
-import { Platform } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 
 import { FloatingTabBar } from "@/components/FloatingTabBar";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
@@ -13,7 +13,21 @@ const BYPASS_AUTH = process.env.EXPO_PUBLIC_DEV_BYPASS_AUTH === "true";
 export default function AppLayout() {
   const { isLoading, isAuthenticated } = useAuthSession();
 
-  if (!BYPASS_AUTH && !isLoading && !isAuthenticated) {
+  // Block child screens from mounting until the auth session has fully
+  // hydrated. Without this gate, direct-navigations (refresh, deep links)
+  // race the AuthSessionProvider's setAccessTokenProvider effect and the
+  // first /api/* call fires with no token wired up — surfacing as
+  // "Authentication provider is not configured" until the user manually
+  // retries.
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (!BYPASS_AUTH && !isAuthenticated) {
     return <Redirect href="/(auth)/welcome" />;
   }
 
