@@ -16,14 +16,14 @@ require (
 	github.com/teslashibe/linkedin-go v1.2.3
 	github.com/teslashibe/magiclink-auth-go v0.2.0
 	github.com/teslashibe/mcptool v0.1.1
-	github.com/teslashibe/nextdoor-go v1.2.1
+	github.com/teslashibe/nextdoor-go v1.2.2
 	github.com/teslashibe/producthunt-go v0.3.3
 	github.com/teslashibe/reddit-go v1.2.3
-	github.com/teslashibe/redditviral-go v0.2.0
+	github.com/teslashibe/redditviral-go v0.2.1
 	github.com/teslashibe/threads-go v1.2.0
-	github.com/teslashibe/tiktok-go v1.2.1
-	github.com/teslashibe/x-go v1.6.1
-	github.com/teslashibe/x-viral-go v0.2.0
+	github.com/teslashibe/tiktok-go v1.2.3
+	github.com/teslashibe/x-go v1.6.3
+	github.com/teslashibe/x-viral-go v0.2.1
 	github.com/valyala/fasthttp v1.70.0
 )
 
